@@ -30,13 +30,31 @@ $ git add *
 $ git commit -m "The descriptive message for what happens in this commit"
 ```
 
-#### Push the commits to the dev branch :
+#### Push the commits to the feature branch :
 ```bash
 $ git push
 ```
 
-### **MAKE SURE TO PULL WORK BEFORE PUSHING**
+### **6. Switch to dev branch**
+ ```bash
+$ git checkout dev
+```
+
+### **7. Merge the feature to dev**
+ ```bash
+$ git merge feature/AI_layer/transcription
+```
+
+### **8. MAKE SURE TO PULL WORK BEFORE PUSHING**
 ```bash 
 git pull
 ```
+> **Solve conflicts if any**
+
+### **9. Push dev branch** 
+```bash 
+git push
+```
+
+> Switch to any branch and continue working then the same steps
 ---
