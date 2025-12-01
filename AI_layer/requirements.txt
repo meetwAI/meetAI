@@ -1,0 +1,9 @@
+fastapi==0.121.3
+uvicorn==0.38.0
+pydantic==2.12.4
+pydantic-settings==2.12.0
+loguru==0.7.3
+Sphinx==8.2.3
+langgraph==1.0.3
+gladiaio-sdk
+python-dotenv==1.2.1

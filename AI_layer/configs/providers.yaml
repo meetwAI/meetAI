@@ -1,0 +1,32 @@
+transcription:
+  default_provider: gladia               # or: faster_whisper, openai, etc.
+  providers:
+    deepgram:
+      api_key: "${DEEPGRAM_API_KEY}"        # resolved by python-dotenv
+      model: "nova-2"
+      language: "en"
+      punctuate: true
+      interim_results: true
+
+    openai:
+      api_key: "${OPENAI_API_KEY}"
+      model: "whisper-1"
+
+    faster_whisper:
+      model: "large-v3"                     # or "distil-large-v3", "medium", etc.
+      device: "cuda"                        # cpu, cuda, mps, auto
+      compute_type: "float16"               # int8, float16, float32
+      download_root: "./models/whisper"
+
+    gladia:                                 
+      api_key: "${GLADIA_API_KEY}"
+      sample_rate: 16000
+      bit_depth: 16
+      channels: 1
+qna:
+  default_provider: openai
+  providers:
+    openai:
+      api_key: "${OPENAI_API_KEY}"
+      model: "gpt-4o"
+      temperature: 0.7
