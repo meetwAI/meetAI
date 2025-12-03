@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Meetings Assistant Dashboard</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Spline+Sans:wght@300..700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "primary": "#2b4bee",
+              "background-light": "#f6f6f8",
+              "background-dark": "#101322",
+            },
+            fontFamily: {
+              "display": ["Spline Sans"]
+            },
+            borderRadius: {"DEFAULT": "0.5rem", "lg": "1rem", "xl": "1.5rem", "full": "9999px"},
+          },
+        },
+      }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .glassmorphism {
+            background: rgba(25, 30, 51, 0.5); /* #191e33 with opacity */
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(50, 59, 103, 0.5); /* #323b67 with opacity */
+        }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark font-display">
+<div class="relative flex min-h-screen w-full">
+<!-- SideNavBar -->
+<aside class="flex flex-col w-64 p-4 bg-background-light dark:bg-background-dark border-r border-transparent dark:border-white/10">
+<div class="flex flex-col gap-4 sticky top-4">
+<div class="flex items-center gap-3 px-2">
+<div class="bg-primary/20 text-primary p-2 rounded-lg">
+<span class="material-symbols-outlined">groups</span>
+</div>
+<h2 class="text-black dark:text-white text-lg font-bold">MeetAssist</h2>
+</div>
+<div class="flex flex-col gap-8 mt-6">
+<div class="flex items-center gap-3">
+<div class="bg-center bg-no-repeat aspect-square bg-cover rounded-full size-10" data-alt="User avatar image" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuB-BtUfNJ3T4wg1Jcl8BEqxPSCRcTyAOvvSYn_ZpDTsEtSweeiXSmBHHQJO51OcqHBiBRp7eLWZWdSw_wza5UEIZnEfLcCfbbVHo0szq_DKV_v-JY5GYmv4l_BK1qNBxngWs4DedR2o2z_i-8L0r9v2646xGqns8BYuub4x9B7Z49XtnWMIXY6RQ_H8nImbdjutoZ8sfXYreqzbK8DMlrFaaiQCD1JkMXcop_zUdZYSqv3Jyg7x4olezh3GZtXVBrNneeKbEDh6cm8");'></div>
+<div class="flex flex-col">
+<h1 class="text-black dark:text-white text-base font-medium leading-normal">Samantha Lee</h1>
+<p class="text-slate-600 dark:text-[#929bc9] text-sm font-normal leading-normal">samantha.lee@email.com</p>
+</div>
+</div>
+<nav class="flex flex-col gap-2">
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg bg-primary/10 dark:bg-[#232948] text-primary dark:text-white" href="#">
+<span class="material-symbols-outlined text-primary dark:text-white">dashboard</span>
+<p class="text-sm font-medium leading-normal">Dashboard</p>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-700 dark:text-white hover:bg-black/5 dark:hover:bg-white/5 transition-colors" href="#">
+<span class="material-symbols-outlined">history</span>
+<p class="text-sm font-medium leading-normal">Previous Meetings</p>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg text-slate-700 dark:text-white hover:bg-black/5 dark:hover:bg-white/5 transition-colors" href="#">
+<span class="material-symbols-outlined">person</span>
+<p class="text-sm font-medium leading-normal">Profile</p>
+</a>
+</nav>
+</div>
+<div class="mt-auto pt-10">
+<button class="flex w-full min-w-[84px] max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-10 px-4 bg-primary text-white text-sm font-bold leading-normal tracking-[0.015em] hover:bg-primary/90 transition-colors">
+<span class="truncate">Join New Meeting</span>
+</button>
+</div>
+</div>
+</aside>
+<!-- Main Content -->
+<main class="flex-1 p-4 sm:p-6 lg:p-8">
+<div class="flex flex-col gap-8 w-full max-w-5xl mx-auto">
+<!-- PageHeading -->
+<div class="flex flex-wrap justify-between gap-3">
+<div class="flex min-w-72 flex-col gap-2">
+<p class="text-black dark:text-white text-4xl font-black leading-tight tracking-[-0.033em]">Welcome back, Samantha!</p>
+<p class="text-slate-600 dark:text-[#929bc9] text-base font-normal leading-normal">Here's a summary of your meeting activity.</p>
+</div>
+</div>
+<!-- Stats -->
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+<div class="flex flex-col gap-2 rounded-xl p-6 glassmorphism">
+<p class="text-white text-base font-medium leading-normal">Total Meetings Recorded</p>
+<p class="text-white tracking-light text-2xl font-bold leading-tight">28</p>
+<p class="text-[#0bda65] text-base font-medium leading-normal">+5 this month</p>
+</div>
+<div class="flex flex-col gap-2 rounded-xl p-6 glassmorphism">
+<p class="text-white text-base font-medium leading-normal">Total Prompts Used</p>
+<p class="text-white tracking-light text-2xl font-bold leading-tight">112</p>
+<p class="text-[#0bda65] text-base font-medium leading-normal">+21 this month</p>
+</div>
+<div class="flex flex-col gap-2 rounded-xl p-6 glassmorphism">
+<p class="text-white text-base font-medium leading-normal">Hours Saved</p>
+<p class="text-white tracking-light text-2xl font-bold leading-tight">14.5</p>
+<p class="text-[#0bda65] text-base font-medium leading-normal">+2.5 this month</p>
+</div>
+</div>
+<!-- SectionHeader -->
+<h2 class="text-black dark:text-white text-[22px] font-bold leading-tight tracking-[-0.015em] pt-5">Recent Meetings</h2>
+<!-- Table -->
+<div class="@container">
+<div class="flex overflow-hidden rounded-xl border border-black/10 dark:border-[#323b67] bg-background-light dark:bg-[#111422]">
+<table class="flex-1 w-full">
+<thead>
+<tr class="bg-black/5 dark:bg-[#191e33]">
+<th class="px-4 py-3 text-left text-slate-700 dark:text-white w-[40%] text-sm font-medium leading-normal">Meeting Title</th>
+<th class="px-4 py-3 text-left text-slate-700 dark:text-white w-[20%] text-sm font-medium leading-normal">Date</th>
+<th class="px-4 py-3 text-left text-slate-700 dark:text-white w-[15%] text-sm font-medium leading-normal">Duration</th>
+<th class="px-4 py-3 text-left text-slate-700 dark:text-white w-[15%] text-sm font-medium leading-normal">Status</th>
+<th class="px-4 py-3 text-left text-slate-700 dark:text-white w-[10%] text-sm font-medium leading-normal"></th>
+</tr>
+</thead>
+<tbody>
+<tr class="border-t border-t-black/10 dark:border-t-[#323b67]">
+<td class="h-[72px] px-4 py-2 w-[40%] text-black dark:text-white text-sm font-normal leading-normal">Project Phoenix Sync</td>
+<td class="h-[72px] px-4 py-2 w-[20%] text-slate-600 dark:text-[#929bc9] text-sm font-normal leading-normal">October 26, 2023</td>
+<td class="h-[72px] px-4 py-2 w-[15%] text-slate-600 dark:text-[#929bc9] text-sm font-normal leading-normal">45 min</td>
+<td class="h-[72px] px-4 py-2 w-[15%] text-sm font-normal leading-normal">
+<div class="flex items-center justify-start">
+<span class="truncate text-xs font-medium leading-normal bg-green-100 dark:bg-green-500/20 text-green-800 dark:text-green-300 px-2.5 py-1 rounded-full">Completed</span>
+</div>
+</td>
+<td class="h-[72px] px-4 py-2 w-[10%] text-slate-600 dark:text-[#929bc9] text-sm font-bold leading-normal tracking-[0.015em] text-right"><a class="text-primary hover:underline" href="#">View</a></td>
+</tr>
+<tr class="border-t border-t-black/10 dark:border-t-[#323b67]">
+<td class="h-[72px] px-4 py-2 w-[40%] text-black dark:text-white text-sm font-normal leading-normal">Q4 Marketing Strategy</td>
+<td class="h-[72px] px-4 py-2 w-[20%] text-slate-600 dark:text-[#929bc9] text-sm font-normal leading-normal">October 25, 2023</td>
+<td class="h-[72px] px-4 py-2 w-[15%] text-slate-600 dark:text-[#929bc9] text-sm font-normal leading-normal">1 hr 15 min</td>
+<td class="h-[72px] px-4 py-2 w-[15%] text-sm font-normal leading-normal">
+<div class="flex items-center justify-start">
+<span class="truncate text-xs font-medium leading-normal bg-green-100 dark:bg-green-500/20 text-green-800 dark:text-green-300 px-2.5 py-1 rounded-full">Completed</span>
+</div>
+</td>
+<td class="h-[72px] px-4 py-2 w-[10%] text-slate-600 dark:text-[#929bc9] text-sm font-bold leading-normal tracking-[0.015em] text-right"><a class="text-primary hover:underline" href="#">View</a></td>
+</tr>
+<tr class="border-t border-t-black/10 dark:border-t-[#323b67]">
+<td class="h-[72px] px-4 py-2 w-[40%] text-black dark:text-white text-sm font-normal leading-normal">Weekly Team Stand-up</td>
+<td class="h-[72px] px-4 py-2 w-[20%] text-slate-600 dark:text-[#929bc9] text-sm font-normal leading-normal">October 24, 2023</td>
+<td class="h-[72px] px-4 py-2 w-[15%] text-slate-600 dark:text-[#929bc9] text-sm font-normal leading-normal">30 min</td>
+<td class="h-[72px] px-4 py-2 w-[15%] text-sm font-normal leading-normal">
+<div class="flex items-center justify-start">
+<span class="truncate text-xs font-medium leading-normal bg-green-100 dark:bg-green-500/20 text-green-800 dark:text-green-300 px-2.5 py-1 rounded-full">Completed</span>
+</div>
+</td>
+<td class="h-[72px] px-4 py-2 w-[10%] text-slate-600 dark:text-[#929bc9] text-sm font-bold leading-normal tracking-[0.015em] text-right"><a class="text-primary hover:underline" href="#">View</a></td>
+</tr>
+<tr class="border-t border-t-black/10 dark:border-t-[#323b67]">
+<td class="h-[72px] px-4 py-2 w-[40%] text-black dark:text-white text-sm font-normal leading-normal">Client Onboarding Call - Acme Inc.</td>
+<td class="h-[72px] px-4 py-2 w-[20%] text-slate-600 dark:text-[#929bc9] text-sm font-normal leading-normal">October 22, 2023</td>
+<td class="h-[72px] px-4 py-2 w-[15%] text-slate-600 dark:text-[#929bc9] text-sm font-normal leading-normal">55 min</td>
+<td class="h-[72px] px-4 py-2 w-[15%] text-sm font-normal leading-normal">
+<div class="flex items-center justify-start">
+<span class="truncate text-xs font-medium leading-normal bg-yellow-100 dark:bg-yellow-500/20 text-yellow-800 dark:text-yellow-300 px-2.5 py-1 rounded-full">Processing</span>
+</div>
+</td>
+<td class="h-[72px] px-4 py-2 w-[10%] text-slate-600 dark:text-[#929bc9] text-sm font-bold leading-normal tracking-[0.015em] text-right"><a class="text-primary hover:underline" href="#">View</a></td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+</main>
+</div>
+</body></html>
