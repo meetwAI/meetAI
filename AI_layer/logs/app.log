@@ -167,3 +167,65 @@
 2025-12-01 09:33:25.790 | DEBUG    | src.integrations.transcription.Gladio:send_audio:121 - Sent 300 audio chunks
 2025-12-01 09:33:28.543 | ERROR    | src.integrations.transcription.Gladio:send_audio:126 - Error sending audio: Cannot call "receive" once a disconnect message has been received.
 2025-12-01 09:33:28.625 | WARNING  | src.integrations.transcription.Gladio:transcribe_stream:163 - Error closing session: 'LiveV2AsyncSession' object has no attribute 'close'
+2025-12-03 08:38:00.239 | INFO     | src.api.routes.BaseRouter:__init__:30 - Router initialized: /qna
+2025-12-03 08:38:00.240 | INFO     | src.api.routes.BaseRouter:__init__:30 - Router initialized: /streaming
+2025-12-03 08:38:00.242 | INFO     | main:lifespan:15 - 🚀 Application starting up...
+2025-12-03 08:38:15.412 | INFO     | src.api.routes.streaming:stream:34 - WebSocket connection established
+2025-12-03 08:39:10.370 | INFO     | src.api.routes.streaming:stream:34 - WebSocket connection established
+2025-12-03 08:39:10.376 | INFO     | src.api.routes.streaming:stream:41 - Client init
+2025-12-03 08:39:10.377 | DEBUG    | src.integrations.transcription:get_transcription_provider:29 - Using transcription provider
+2025-12-03 08:39:10.378 | DEBUG    | src.integrations.transcription:get_transcription_provider:40 - Config loaded
+2025-12-03 08:39:10.378 | DEBUG    | src.integrations.transcription:get_transcription_provider:52 - API key extracted
+2025-12-03 08:39:10.378 | INFO     | src.integrations.transcription:get_transcription_provider:68 - Instantiating transcription provider
+2025-12-03 08:39:10.378 | DEBUG    | src.integrations.transcription.Gladio:__init__:25 - Initializing GladiaTranscriptionProvider
+2025-12-03 08:39:10.379 | DEBUG    | src.integrations.transcription.Gladio:__init__:37 - GladiaClient initialized successfully
+2025-12-03 08:39:10.504 | INFO     | src.integrations.transcription.Gladio:__init__:40 - Gladia live_v2_async client ready
+2025-12-03 08:39:10.504 | ERROR    | src.api.routes.streaming:stream:80 - Streaming error
+2025-12-03 08:39:10.547 | INFO     | src.api.routes.streaming:stream:84 - WebSocket closed
+2025-12-03 08:39:19.267 | INFO     | src.api.routes.streaming:stream:34 - WebSocket connection established
+2025-12-03 08:39:19.270 | INFO     | src.api.routes.streaming:stream:41 - Client init
+2025-12-03 08:39:19.270 | DEBUG    | src.integrations.transcription:get_transcription_provider:29 - Using transcription provider
+2025-12-03 08:39:19.271 | DEBUG    | src.integrations.transcription:get_transcription_provider:40 - Config loaded
+2025-12-03 08:39:19.271 | DEBUG    | src.integrations.transcription:get_transcription_provider:52 - API key extracted
+2025-12-03 08:39:19.271 | INFO     | src.integrations.transcription:get_transcription_provider:68 - Instantiating transcription provider
+2025-12-03 08:39:19.271 | DEBUG    | src.integrations.transcription.Gladio:__init__:25 - Initializing GladiaTranscriptionProvider
+2025-12-03 08:39:19.271 | DEBUG    | src.integrations.transcription.Gladio:__init__:37 - GladiaClient initialized successfully
+2025-12-03 08:39:19.321 | INFO     | src.integrations.transcription.Gladio:__init__:40 - Gladia live_v2_async client ready
+2025-12-03 08:39:19.322 | ERROR    | src.api.routes.streaming:stream:80 - Streaming error
+2025-12-03 08:39:19.367 | INFO     | src.api.routes.streaming:stream:84 - WebSocket closed
+2025-12-03 08:40:16.684 | INFO     | main:lifespan:18 - 👋 Application shutting down...
+2025-12-03 08:40:21.583 | INFO     | src.api.routes.BaseRouter:__init__:30 - Router initialized: /qna
+2025-12-03 08:40:21.583 | INFO     | src.api.routes.BaseRouter:__init__:30 - Router initialized: /streaming
+2025-12-03 08:40:21.587 | INFO     | main:lifespan:15 - 🚀 Application starting up...
+2025-12-03 08:40:23.428 | INFO     | main:lifespan:18 - 👋 Application shutting down...
+2025-12-03 08:40:28.936 | INFO     | src.api.routes.BaseRouter:__init__:30 - Router initialized: /qna
+2025-12-03 08:40:28.936 | INFO     | src.api.routes.BaseRouter:__init__:30 - Router initialized: /streaming
+2025-12-03 08:40:28.939 | INFO     | main:lifespan:15 - 🚀 Application starting up...
+2025-12-03 08:40:39.199 | DEBUG    | src.integrations.transcription:get_transcription_provider:29 - Using transcription provider
+2025-12-03 08:40:39.200 | DEBUG    | src.integrations.transcription:get_transcription_provider:40 - Config loaded
+2025-12-03 08:40:39.200 | DEBUG    | src.integrations.transcription:get_transcription_provider:52 - API key extracted
+2025-12-03 08:40:39.200 | INFO     | src.integrations.transcription:get_transcription_provider:68 - Instantiating transcription provider
+2025-12-03 08:40:39.200 | DEBUG    | src.integrations.transcription.Gladio:__init__:25 - Initializing GladiaTranscriptionProvider
+2025-12-03 08:40:39.200 | DEBUG    | src.integrations.transcription.Gladio:__init__:37 - GladiaClient initialized successfully
+2025-12-03 08:40:39.255 | INFO     | src.integrations.transcription.Gladio:__init__:40 - Gladia live_v2_async client ready
+2025-12-03 08:40:39.255 | DEBUG    | src.integrations.transcription.Gladio:transcribe_stream:73 - Starting Gladia session
+2025-12-03 08:40:40.055 | INFO     | src.integrations.transcription.Gladio:on_started:96 - Gladia session started
+2025-12-03 08:40:56.525 | DEBUG    | src.integrations.transcription.Gladio:send_audio:121 - Sent 50 audio chunks
+2025-12-03 08:41:09.657 | DEBUG    | src.integrations.transcription.Gladio:send_audio:121 - Sent 100 audio chunks
+2025-12-03 08:41:21.656 | ERROR    | src.integrations.transcription.Gladio:send_audio:126 - Error sending audio: Cannot call "receive" once a disconnect message has been received.
+2025-12-03 08:41:21.717 | WARNING  | src.integrations.transcription.Gladio:transcribe_stream:163 - Error closing session: 'LiveV2AsyncSession' object has no attribute 'close'
+2025-12-03 08:41:52.045 | INFO     | src.integrations.transcription.Gladio:on_ended:102 - Gladia session ended
+2025-12-03 09:10:21.713 | DEBUG    | src.integrations.transcription:get_transcription_provider:29 - Using transcription provider
+2025-12-03 09:10:21.715 | DEBUG    | src.integrations.transcription:get_transcription_provider:40 - Config loaded
+2025-12-03 09:10:21.715 | DEBUG    | src.integrations.transcription:get_transcription_provider:52 - API key extracted
+2025-12-03 09:10:21.715 | INFO     | src.integrations.transcription:get_transcription_provider:68 - Instantiating transcription provider
+2025-12-03 09:10:21.716 | DEBUG    | src.integrations.transcription.Gladio:__init__:25 - Initializing GladiaTranscriptionProvider
+2025-12-03 09:10:21.717 | DEBUG    | src.integrations.transcription.Gladio:__init__:37 - GladiaClient initialized successfully
+2025-12-03 09:10:21.761 | INFO     | src.integrations.transcription.Gladio:__init__:40 - Gladia live_v2_async client ready
+2025-12-03 09:10:21.762 | DEBUG    | src.integrations.transcription.Gladio:transcribe_stream:73 - Starting Gladia session
+2025-12-03 09:10:21.765 | ERROR    | src.integrations.transcription.Gladio:send_audio:126 - Error sending audio: Cannot call "receive" once a disconnect message has been received.
+2025-12-03 09:10:21.781 | WARNING  | src.integrations.transcription.Gladio:transcribe_stream:163 - Error closing session: 'LiveV2AsyncSession' object has no attribute 'close'
+2025-12-03 09:10:21.813 | INFO     | main:lifespan:18 - 👋 Application shutting down...
+2025-12-03 09:10:23.412 | INFO     | src.api.routes.BaseRouter:__init__:30 - Router initialized: /qna
+2025-12-03 09:10:23.413 | INFO     | src.api.routes.BaseRouter:__init__:30 - Router initialized: /streaming
+2025-12-03 09:10:23.415 | INFO     | main:lifespan:15 - 🚀 Application starting up...

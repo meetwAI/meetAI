@@ -52,7 +52,7 @@ class GladiaTranscriptionProvider(BaseTranscription):
         """
         Transcribe audio stream in real-time using Gladia SDK.
         """
-        # Build init request - Note: no 'model' field in LiveV2InitRequest
+        # Build init request
         init_request = LiveV2InitRequest(
             encoding="wav/pcm",
             sample_rate=self.config.sample_rate,
