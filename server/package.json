@@ -1,10 +1,12 @@
 {
   "scripts": {
     "start": "node meeting-service/index.js",
-    "start:gateway": "node gateway/index.js"
+    "start:gateway": "node gateway/app.js",
+    "start:auth": "node auth-service/index.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
+    "cookie-parser": "^1.4.6",
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.2",
     "redis": "^5.10.0",
