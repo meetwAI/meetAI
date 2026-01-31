@@ -48,9 +48,6 @@ export default function Dashboard() {
           <h1>Dashboard</h1>
           <p>Here’s a quick look at your latest meetings.</p>
         </div>
-        <button type="button" className="primary-button">
-          Record new meeting
-        </button>
       </header>
 
       <section className="dashboard-section">

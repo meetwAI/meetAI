@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 
 const mockMeetings = [
   {
@@ -97,9 +98,56 @@ export default function PreviousMeetings() {
   const [selectedId, setSelectedId] = useState(mockMeetings[0]?.id ?? null);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
 
+  const {
+    data: meetings = mockMeetings,
+    isLoading,
+    error,
+  } = useQuery({
+    queryKey: ['meetings', 'dummy'],
+    queryFn: async () => {
+      const token = localStorage.getItem('meetai_token');
+      const response = await fetch('http://localhost:4010/meetings/dummy', {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          const authError = new Error('Unauthorized');
+          authError.status = 401;
+          throw authError;
+        }
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload?.message || 'Failed to load meetings');
+      }
+
+      const data = await response.json();
+      return Array.isArray(data) ? data : [data];
+    },
+    staleTime: 10_000,
+  });
+
+  useEffect(() => {
+    if (meetings?.length) {
+      setSelectedId((prev) => prev ?? meetings[0].id);
+    }
+  }, [meetings]);
+
+  const normalizedMeetings = useMemo(
+    () =>
+      meetings.map((meeting) => ({
+        id: meeting.id,
+        title: meeting.title,
+        date: meeting.date,
+        summary: meeting.summary,
+        participants: Array.isArray(meeting.participants) ? meeting.participants : [],
+        messages: Array.isArray(meeting.messages) ? meeting.messages : [],
+      })),
+    [meetings]
+  );
+
   const selectedMeeting = useMemo(
-    () => mockMeetings.find((meeting) => meeting.id === selectedId),
-    [selectedId]
+    () => normalizedMeetings.find((meeting) => meeting.id === selectedId),
+    [normalizedMeetings, selectedId]
   );
 
   return (
@@ -110,8 +158,10 @@ export default function PreviousMeetings() {
           <p>Click a meeting to review the recap and conversation.</p>
         </div>
 
+        {isLoading && <p>Loading meetings…</p>}
+        {error && <p>{error.message || 'Unable to load meetings'}</p>}
         <div className="meeting-cards">
-          {mockMeetings.map((meeting) => (
+          {normalizedMeetings.map((meeting) => (
             <button
               key={meeting.id}
               type="button"
