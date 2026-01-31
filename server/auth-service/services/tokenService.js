@@ -69,6 +69,7 @@ module.exports = {
   issueTokens,
   verifyAccessToken,
   verifyRefreshToken,
+  redisClient,
   JWT_SECRET,
   JWT_TTL_SECONDS,
   REFRESH_TTL_SECONDS,

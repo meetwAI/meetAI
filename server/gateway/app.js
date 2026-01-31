@@ -4,6 +4,7 @@ const express = require('express');
 const cors = require('cors');
 const { Server } = require('socket.io');
 const { io: ioClient } = require('socket.io-client');
+const { loginRateLimiter } = require('./rate-limiters/loginRateLimiter');
 
 const PORT = process.env.GATEWAY_PORT || 4010;
 const MEETING_SERVICE_URL = process.env.MEETING_SERVICE_URL || 'http://localhost:4001';
@@ -150,7 +151,7 @@ const proxyMeetingServiceGet = (path, req, res) => {
   proxyReq.end();
 };
 
-app.post('/login', (req, res) => proxyAuth('/login', req, res));
+app.post('/login', loginRateLimiter, (req, res) => proxyAuth('/login', req, res));
 app.post('/refresh', (req, res) => proxyAuth('/refresh', req, res));
 
 app.use(verifyAccess);
