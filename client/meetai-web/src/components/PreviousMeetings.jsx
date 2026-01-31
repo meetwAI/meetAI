@@ -1,114 +1,20 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { fetchWithAuth } from '../api/fetchWithAuth';
 
-const mockMeetings = [
-  {
-    id: 'm-001',
-    title: 'Weekly Product Sync',
-    date: 'Jan 27, 2026',
-    summary:
-      'Reviewed sprint progress, clarified scope for onboarding flow, and aligned on launch risks.',
-    participants: ['Ava', 'Nia', 'Zane', 'Ishaan'],
-    messages: [
-      {
-        id: 'msg-001',
-        role: 'user',
-        text: 'Can you summarize the key launch risks from today?',
-        time: '10:04 AM',
-      },
-      {
-        id: 'msg-002',
-        role: 'assistant',
-        text: 'Top risks: API latency under load, missing analytics events, and dependency on external auth provider.',
-        time: '10:04 AM',
-      },
-      {
-        id: 'msg-003',
-        role: 'user',
-        text: 'Add an action item for the auth provider contingency plan.',
-        time: '10:05 AM',
-      },
-      {
-        id: 'msg-004',
-        role: 'assistant',
-        text: 'Action item added: Draft fallback auth flow and update runbook by Friday.',
-        time: '10:05 AM',
-      },
-    ],
-  },
-  {
-    id: 'm-002',
-    title: 'Design Review — Dashboard',
-    date: 'Jan 24, 2026',
-    summary:
-      'Validated card hierarchy, agreed on data density guidelines, and flagged missing empty states.',
-    participants: ['Maya', 'Ravi', 'Leah'],
-    messages: [
-      {
-        id: 'msg-005',
-        role: 'user',
-        text: 'What were the top UX issues discussed?',
-        time: '3:18 PM',
-      },
-      {
-        id: 'msg-006',
-        role: 'assistant',
-        text: 'Primary issues: unclear filter affordance, inconsistent metric labeling, and no loading skeleton.',
-        time: '3:18 PM',
-      },
-      {
-        id: 'msg-007',
-        role: 'assistant',
-        text: 'Suggested fix: add a filter chip bar and reserve a right rail for insights.',
-        time: '3:19 PM',
-      },
-    ],
-  },
-  {
-    id: 'm-003',
-    title: 'Customer Feedback Debrief',
-    date: 'Jan 21, 2026',
-    summary:
-      'Top themes: faster search, export options, and clearer ownership of action items.',
-    participants: ['Noah', 'Elena', 'Priya'],
-    messages: [
-      {
-        id: 'msg-008',
-        role: 'user',
-        text: 'Any recurring requests worth prioritizing?',
-        time: '1:41 PM',
-      },
-      {
-        id: 'msg-009',
-        role: 'assistant',
-        text: 'Recurring: CSV export, filter by owner, and quick search with recent queries.',
-        time: '1:41 PM',
-      },
-      {
-        id: 'msg-010',
-        role: 'assistant',
-        text: 'Recommend adding export + search improvements to Q1 roadmap.',
-        time: '1:42 PM',
-      },
-    ],
-  },
-];
 
 export default function PreviousMeetings() {
-  const [selectedId, setSelectedId] = useState(mockMeetings[0]?.id ?? null);
+  const [selectedId, setSelectedId] = useState(null);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
 
   const {
-    data: meetings = mockMeetings,
+    data: meetings = [],
     isLoading,
     error,
   } = useQuery({
     queryKey: ['meetings', 'dummy'],
     queryFn: async () => {
-      const token = localStorage.getItem('meetai_token');
-      const response = await fetch('http://localhost:4010/meetings/dummy', {
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-      });
+      const response = await fetchWithAuth('/meetings/dummy');
 
       if (!response.ok) {
         if (response.status === 401) {
