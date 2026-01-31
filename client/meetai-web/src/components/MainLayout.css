@@ -1,257 +1,66 @@
 .main-layout {
   display: flex;
+  flex-direction: column;
   min-height: 100vh;
   background-color: var(--zen-brown-littledarker);
 }
 
-.sidebar {
-  width: 260px;
-  background:rgb(0 0 0 / 85%);
+/* Topbar (replaces left sidebar) */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  height: 72px;
+  padding: 0 20px;
+  background: rgb(0 0 0 / 85%);
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
   color: var(--zen-cream);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 32px 0 0 0;
-  box-shadow: 
-    2px 0 20px rgba(0, 0, 0, 0.4),
-    inset -1px 0 1px rgba(255, 255, 255, 0.1);
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  border-right: 1px solid rgba(245, 240, 229, 0.15);
-  position: relative;
-  overflow: hidden;
+  border-bottom: 1px solid rgba(245, 240, 229, 0.12);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.35);
+  z-index: 30;
 }
 
-.sidebar::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  right: 0;
-  width: 1px;
-  height: 100%;
-  background: linear-gradient(
-    180deg,
-    rgba(255, 255, 255, 0) 0%,
-    rgba(255, 255, 255, 0.15) 10%,
-    rgba(255, 255, 255, 0.25) 50%,
-    rgba(255, 255, 255, 0.15) 90%,
-    rgba(255, 255, 255, 0) 100%
-  );
-  pointer-events: none;
-}
-
-.sidebar.closed {
-  width: 64px;
-  min-width: 64px;
-}
 
 .project-name {
-  font-size: 2rem;
+  font-size: 1.25rem;
   font-weight: 700;
-  margin-bottom: 48px;
-  letter-spacing: 2px;
-  background-image: linear-gradient(
-    to bottom,
-    rgba(255, 255, 255, 1) 0%,
-    rgba(255, 255, 255, 0.95) 20%,
-    rgba(255, 255, 255, 0.75) 50%,
-    rgba(255, 255, 255, 0.95) 80%,
-    rgba(255, 255, 255, 1) 100%
-  );
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  -webkit-text-stroke-width: 0.5px;
-  -webkit-text-stroke-color: rgba(255, 255, 255, 0.9);
+  letter-spacing: 1px;
+  color: var(--zen-cream);
 }
 
-.user-section {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 48px;
-}
 
-.username {
-  font-size: 1.1rem;
-  color: var(--zen-brown-light);
-}
-
-.user-image {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  object-fit: cover;
-  border: 2px solid var(--zen-cream);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-}
-
-.user-image.small {
-  width: 36px;
-  height: 36px;
-}
-
-.nav-links {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  width: 100%;
-  align-items: stretch;
-  padding: 8px 12px;
-  box-sizing: border-box;
-}
-
-.nav-links .nav-link {
+.topbar-nav .nav-link {
   color: var(--zen-cream);
   text-decoration: none;
-  font-size: 1.05rem;
-  padding: 10px 16px;
-  border-radius: 12px;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  font-size: 1rem;
+  padding: 8px 12px;
+  border-radius: 10px;
   display: flex;
   align-items: center;
-  gap: 12px;
-  width: 100%;
-  box-sizing: border-box;
-  position: relative;
-  overflow: hidden;
+  gap: 8px;
+  transition: background 0.18s ease, transform 0.12s ease;
 }
 
-.nav-links .nav-link::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: radial-gradient(
-    circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
-    rgba(255, 255, 255, 0.15) 0%,
-    rgba(255, 255, 255, 0.05) 40%,
-    transparent 70%
-  );
-  opacity: 0;
-  transition: opacity 0.3s ease;
-  pointer-events: none;
+.topbar-nav .nav-link:hover,
+.topbar-nav .nav-link.active {
+  background: rgba(94, 68, 49, 0.18);
+  transform: translateY(-1px);
 }
 
-.nav-links .nav-link:hover::before {
-  opacity: 1;
-}
 
-.nav-links .nav-link .icon {
-  display: inline-flex;
-  width: 20px;
-  height: 20px;
-  align-items: center;
-  justify-content: center;
-  color: var(--zen-cream);
-}
 
-.nav-links .nav-link .label {
-  display: inline;
-  color: var(--zen-cream);
-}
 
-.nav-links .nav-link.active,
-.nav-links .nav-link:hover {
-  background: rgba(94, 68, 49, 0.6);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  box-shadow: 
-    0 4px 12px rgba(0, 0, 0, 0.2),
-    inset 0 1px 1px rgba(255, 255, 255, 0.1);
-  transform: scale(1.02);
-}
 
-.nav-links .nav-link:hover .icon,
-.nav-links .nav-link:hover .label {
-  background-image: linear-gradient(
-    to bottom,
-    rgba(255, 255, 255, 0.9) 0%,
-    rgba(255, 255, 255, 0.6) 50%,
-    rgba(255, 255, 255, 0.9) 100%
-  );
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-}
 
-/* Closed sidebar behaviour: hide labels, show icons (if any) */
-.sidebar.closed .project-name,
-.sidebar.closed .user-section,
-.sidebar.closed .username {
-  display: none !important;
-}
 
-.sidebar.closed .nav-links {
-  align-items: center;
-  padding: 8px 0;
-}
-
-.sidebar.closed .nav-link {
-  justify-content: center;
-  padding-left: 0;
-  padding-right: 0;
-}
-
-.sidebar.closed .nav-link .label {
-  display: none;
-}
-
-.sidebar.closed .nav-link .icon {
-  display: inline-flex;
-}
-
-.sidebar-toggle-btn {
-  width: 100%;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  background: none;
-  border: none;
-  color: var(--zen-cream);
-  cursor: pointer;
-  font-size: 22px;
-  padding: 16px 0;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  margin-top: auto;
-  position: relative;
-  overflow: hidden;
-}
-
-.sidebar-toggle-btn::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: radial-gradient(
-    circle at center,
-    rgba(255, 255, 255, 0.15) 0%,
-    transparent 70%
-  );
-  opacity: 0;
-  transition: opacity 0.3s ease;
-}
-
-.sidebar-toggle-btn:hover::before {
-  opacity: 1;
-}
-
-.sidebar-toggle-btn:hover {
-  background: rgba(94, 68, 49, 0.6);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  color: var(--zen-cream);
-  transform: scale(1.05);
-}
-
-.sidebar-toggle-btn:active {
-  transform: scale(0.95);
-}
-
+/* Main content should account for topbar height */
 .main-content {
   flex: 1;
-  /* background: var(--zen-brown-littledarker); */
   background-color: #7e7e7e;
-  padding: 32px;
-  min-height: 100vh;
+  padding: 24px;
+  padding-top: 32px;
+  min-height: calc(100vh - 72px);
 }
+
+/* remove sidebar-specific closed behaviour and toggle styles */

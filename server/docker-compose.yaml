@@ -1,0 +1,23 @@
+version: "3.9"
+
+services:
+  redis:
+    image: redis:7
+    container_name: redis
+    ports:
+      - "6379:6379"
+    restart: always
+
+  auth-service:
+    build: ./services/auth-service
+    depends_on:
+      - redis
+    environment:
+      REDIS_URL: redis://redis:6379
+
+  meeting-service:
+    build: ./services/meeting-service
+    depends_on:
+      - redis
+    environment:
+      REDIS_URL: redis://redis:6379
