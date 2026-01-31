@@ -5,8 +5,7 @@ import MainLayout from './components/MainLayout';
 import { useSignals } from '@preact/signals-react/runtime';
 import PreviousMeetings from './components/PreviousMeetings';
 import Login from './components/Login';
-// Placeholder components for new routes
-const Profile = () => <div>Profile</div>;
+import Profile from './components/Profile';
 
 const RequireAuth = ({ children }) => {
   const token = localStorage.getItem('meetai_token');
