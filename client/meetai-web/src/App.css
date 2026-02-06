@@ -120,7 +120,7 @@
 .meeting-tag {
 	background: rgba(107, 142, 35, 0.15);
 	border: 1px solid rgba(107, 142, 35, 0.35);
-	padding: 4px 10px;
+	padding: 16px 10px;
 	border-radius: 999px;
 	font-size: 0.8rem;
 }
