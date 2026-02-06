@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import './Login.css';
+import { connectSocket } from '../api/socketClient';
 
 const API_URL = 'http://localhost:4010';
 
@@ -32,6 +33,12 @@ export default function Login() {
       const payload = await response.json();
       localStorage.setItem('meetai_token', payload.token);
       localStorage.setItem('meetai_user', JSON.stringify(payload.user));
+      try {
+        connectSocket(payload.token);
+      } catch (e) {
+        // non-fatal: socket failures will be surfaced where used
+        console.error('socket connect failed', e);
+      }
       navigate('/', { replace: true });
     } catch (err) {
       setError(err?.message || 'Unable to login');

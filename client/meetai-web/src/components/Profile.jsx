@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { disconnectSocket } from '../api/socketClient';
 
 export default function Profile() {
   const navigate = useNavigate();
@@ -13,6 +14,11 @@ export default function Profile() {
   }, []);
 
   const handleLogout = () => {
+    try {
+      disconnectSocket();
+    } catch (e) {
+      // ignore
+    }
     localStorage.removeItem('meetai_token');
     localStorage.removeItem('meetai_user');
     navigate('/login', { replace: true });

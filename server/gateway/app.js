@@ -185,6 +185,7 @@ const isBinaryPayload = (payload) =>
   (payload && typeof payload === 'object' && payload.type === 'Buffer');
 
 io.use((socket, next) => {
+  debugger
   const token = socket.handshake.auth?.token;
   if (!token) {
     return next(new Error('Unauthorized'));

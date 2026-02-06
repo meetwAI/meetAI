@@ -1,7 +1,7 @@
 import React from 'react';
 import { Link, Outlet } from 'react-router-dom';
 import './MainLayout.css';
-import { io } from 'socket.io-client';
+import { getSocket, connectSocket } from '../api/socketClient';
 import {Plus} from 'lucide-react'
 const MainLayout = ({ username = 'John Doe', userImage = 'https://via.placeholder.com/80' }) => {
     const [captureState, setCaptureState] = React.useState('idle');
@@ -22,7 +22,13 @@ const MainLayout = ({ username = 'John Doe', userImage = 'https://via.placeholde
             mediaRecorderRef.current = null;
         }
         if (socketRef.current) {
-            socketRef.current.disconnect();
+            try {
+                socketRef.current.off('connect');
+                socketRef.current.off('connect_error');
+                socketRef.current.off('meeting-audio-processed');
+            } catch (e) {
+                // ignore
+            }
             socketRef.current = null;
         }
         if (displayStreamRef.current) {
@@ -76,10 +82,15 @@ const MainLayout = ({ username = 'John Doe', userImage = 'https://via.placeholde
             displayStreamRef.current = displayStream;
             audioStreamRef.current = audioStream;
 
-            const socket = io('http://localhost:4010', {
-                transports: ['websocket'],
-                auth: { token },
-            });
+            let socket = getSocket();
+            if (!socket && token) {
+                socket = connectSocket(token);
+            }
+            if (!socket) {
+                setCaptureState('idle');
+                setCaptureError('Unable to connect to meeting service.');
+                return;
+            }
             socketRef.current = socket;
 
             socket.on('connect', () => {
