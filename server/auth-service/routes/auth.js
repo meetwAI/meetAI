@@ -20,7 +20,7 @@ const setRefreshCookie = (res, refreshToken) => {
 };
 
 const buildUser = (user) => ({
-  id: user.id,
+  id: user.id ?? user.sub,
   username: user.username,
   name: user.name,
 });

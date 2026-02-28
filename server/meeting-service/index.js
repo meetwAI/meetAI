@@ -7,11 +7,48 @@ const { query } = require('../db/client');
 const PORT = process.env.PORT || 4001;
 
 const app = express();
-app.use(cors({ origin: '*', methods: ['GET', 'POST'] }));
+app.use(cors({ origin: '*', methods: ['GET', 'POST', 'PATCH', 'DELETE'] }));
 app.use(express.json());
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
+});
+
+app.post('/meetings', (req, res) => {
+  const userId = Number(req.headers['x-user-id']);
+  if (!Number.isFinite(userId) || userId <= 0) {
+    return res.status(401).json({ message: 'Unauthorized' });
+  }
+
+  const startedAt = new Date();
+  const title = String(req.body?.title || '').trim() || `Meeting ${startedAt.toLocaleString()}`;
+  const participants = Array.isArray(req.body?.participants) ? req.body.participants : [];
+
+  const transcript = {
+    title,
+    durationMinutes: 0,
+    participants,
+    actionItems: [],
+    messages: [],
+  };
+
+  return query(
+    `INSERT INTO meetings (user_id, summarisation, full_transcript, date, start_time, duration_minutes)
+     VALUES ($1, $2, $3::jsonb, $4, $5, 0)
+     RETURNING id, start_time`,
+    [userId, '', JSON.stringify(transcript), startedAt, startedAt],
+  )
+    .then((result) => {
+      const row = result.rows[0];
+      return res.status(201).json({
+        id: row.id,
+        startTime: row.start_time,
+      });
+    })
+    .catch((error) => {
+      console.error('[meeting-service] failed to create meeting', error);
+      return res.status(500).json({ message: 'Failed to create meeting.' });
+    });
 });
 
 app.get('/meetings/dummy', (_req, res) => {
@@ -171,6 +208,123 @@ app.post('/meetings/:meetingId/messages', (req, res) => {
     .catch((error) => {
       console.error('[meeting-service] failed to append meeting message', error);
       return res.status(500).json({ message: 'Failed to save message.' });
+    });
+});
+
+app.patch('/meetings/:meetingId/title', (req, res) => {
+  const meetingId = Number(req.params.meetingId);
+  const userId = Number(req.headers['x-user-id']);
+  const title = String(req.body?.title || '').trim();
+
+  if (!Number.isFinite(meetingId) || meetingId <= 0) {
+    return res.status(400).json({ message: 'Invalid meeting id.' });
+  }
+
+  if (!Number.isFinite(userId) || userId <= 0) {
+    return res.status(401).json({ message: 'Unauthorized' });
+  }
+
+  if (!title) {
+    return res.status(400).json({ message: 'Title is required.' });
+  }
+
+  return query(
+    `UPDATE meetings
+     SET full_transcript = jsonb_set(
+       COALESCE(full_transcript, '{}'::jsonb),
+       '{title}',
+       to_jsonb($1::text),
+       true
+     )
+     WHERE id = $2 AND user_id = $3
+     RETURNING id, COALESCE(full_transcript->>'title', CONCAT('Meeting ', id::text)) AS title`,
+    [title, meetingId, userId],
+  )
+    .then((result) => {
+      const row = result.rows[0];
+      if (!row) {
+        return res.status(404).json({ message: 'Meeting not found.' });
+      }
+      return res.json({ id: row.id, title: row.title });
+    })
+    .catch((error) => {
+      console.error('[meeting-service] failed to rename meeting', error);
+      return res.status(500).json({ message: 'Failed to rename meeting.' });
+    });
+});
+
+app.delete('/meetings/:meetingId', (req, res) => {
+  const meetingId = Number(req.params.meetingId);
+  const userId = Number(req.headers['x-user-id']);
+
+  if (!Number.isFinite(meetingId) || meetingId <= 0) {
+    return res.status(400).json({ message: 'Invalid meeting id.' });
+  }
+  if (!Number.isFinite(userId) || userId <= 0) {
+    return res.status(401).json({ message: 'Unauthorized' });
+  }
+
+  return query(
+    `DELETE FROM meetings
+     WHERE id = $1 AND user_id = $2
+     RETURNING id`,
+    [meetingId, userId],
+  )
+    .then((result) => {
+      if (!result.rowCount) {
+        return res.status(404).json({ message: 'Meeting not found.' });
+      }
+      return res.json({ deleted: true, id: Number(result.rows[0].id) });
+    })
+    .catch((error) => {
+      console.error('[meeting-service] failed to delete meeting', error);
+      return res.status(500).json({ message: 'Failed to delete meeting.' });
+    });
+});
+
+app.post('/meetings/:meetingId/complete', (req, res) => {
+  const meetingId = Number(req.params.meetingId);
+  if (!Number.isFinite(meetingId) || meetingId <= 0) {
+    return res.status(400).json({ message: 'Invalid meeting id.' });
+  }
+
+  return query(
+    `UPDATE meetings
+     SET end_time = NOW(),
+         duration_minutes = GREATEST(
+           0,
+           CEIL(EXTRACT(EPOCH FROM (NOW() - COALESCE(start_time, date))) / 60.0)::INT
+         ),
+         full_transcript = jsonb_set(
+           COALESCE(full_transcript, '{}'::jsonb),
+           '{durationMinutes}',
+           to_jsonb(
+             GREATEST(
+               0,
+               CEIL(EXTRACT(EPOCH FROM (NOW() - COALESCE(start_time, date))) / 60.0)::INT
+             )
+           ),
+           true
+         )
+     WHERE id = $1
+     RETURNING id, start_time, end_time, duration_minutes`,
+    [meetingId],
+  )
+    .then((result) => {
+      const row = result.rows[0];
+      if (!row) {
+        return res.status(404).json({ message: 'Meeting not found.' });
+      }
+      return res.json({
+        id: row.id,
+        startTime: row.start_time,
+        endTime: row.end_time,
+        durationMinutes: Number(row.duration_minutes) || 0,
+      });
+    })
+    .catch((error) => {
+      console.error('[meeting-service] failed to complete meeting', error);
+      return res.status(500).json({ message: 'Failed to complete meeting.' });
     });
 });
 

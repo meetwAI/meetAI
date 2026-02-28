@@ -1,7 +1,8 @@
 .main-layout {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
   background-color: var(--zen-brown-littledarker);
 }
 
@@ -150,7 +151,9 @@
   background-color: #7e7e7e;
   padding: 24px;
   padding-top: 32px;
-  min-height: calc(100vh - 72px);
+  height: calc(100vh - 72px);
+  min-height: 0;
+  overflow: hidden;
 }
 
 /* remove sidebar-specific closed behaviour and toggle styles */

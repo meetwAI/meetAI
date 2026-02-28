@@ -1,9 +1,13 @@
 import React from 'react';
-import { Link, Outlet } from 'react-router-dom';
+import { Link, Outlet, useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import './MainLayout.css';
 import { getSocket, connectSocket } from '../api/socketClient';
+import { fetchWithAuth } from '../api/fetchWithAuth';
 import {Plus} from 'lucide-react'
 const MainLayout = ({ username = 'John Doe', userImage = 'https://via.placeholder.com/80' }) => {
+    const navigate = useNavigate();
+    const queryClient = useQueryClient();
     const [captureState, setCaptureState] = React.useState('idle');
     const [captureError, setCaptureError] = React.useState('');
     const [serverMessage, setServerMessage] = React.useState('');
@@ -13,8 +17,32 @@ const MainLayout = ({ username = 'John Doe', userImage = 'https://via.placeholde
     const socketRef = React.useRef(null);
     const chunkIndexRef = React.useRef(0);
     const chunkStartedAtRef = React.useRef(0);
+    const activeMeetingIdRef = React.useRef(null);
 
-    const stopCapture = React.useCallback(() => {
+    const appendMessageToMeetingCache = React.useCallback((meetingId, message) => {
+        queryClient.setQueryData(['meeting', String(meetingId)], (current) => {
+            if (!current || String(current.id) !== String(meetingId)) {
+                return current;
+            }
+            const messages = Array.isArray(current.messages) ? current.messages : [];
+            return { ...current, messages: [...messages, message] };
+        });
+
+        queryClient.setQueryData(['meetings', 'dummy'], (current) => {
+            const meetings = Array.isArray(current) ? current : [];
+            return meetings.map((meeting) => {
+                if (String(meeting.id) !== String(meetingId)) {
+                    return meeting;
+                }
+                const messages = Array.isArray(meeting.messages) ? meeting.messages : [];
+                return { ...meeting, messages: [...messages, message] };
+            });
+        });
+
+    }, [queryClient]);
+
+    const stopCapture = React.useCallback(async () => {
+        const completedMeetingId = activeMeetingIdRef.current;
         if (mediaRecorderRef.current) {
             if (mediaRecorderRef.current.state !== 'inactive') {
                 mediaRecorderRef.current.stop();
@@ -39,8 +67,19 @@ const MainLayout = ({ username = 'John Doe', userImage = 'https://via.placeholde
             audioStreamRef.current.getTracks().forEach((track) => track.stop());
             audioStreamRef.current = null;
         }
+        if (completedMeetingId) {
+            try {
+                await fetchWithAuth(`/meetings/${completedMeetingId}/complete`, { method: 'POST' });
+                queryClient.invalidateQueries({ queryKey: ['meetings', 'recent', 3] });
+                queryClient.invalidateQueries({ queryKey: ['meetings', 'dummy'] });
+                queryClient.invalidateQueries({ queryKey: ['meeting', String(completedMeetingId)] });
+            } catch (error) {
+                setCaptureError(error?.message || 'Failed to finalize meeting.');
+            }
+        }
+        activeMeetingIdRef.current = null;
         setCaptureState('idle');
-    }, []);
+    }, [queryClient]);
 
     const startCapture = React.useCallback(async () => {
         setCaptureError('');
@@ -67,6 +106,28 @@ const MainLayout = ({ username = 'John Doe', userImage = 'https://via.placeholde
         }
 
         try {
+            const createResponse = await fetchWithAuth('/meetings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({}),
+            });
+            const createdMeeting = await createResponse.json();
+            const meetingId = createdMeeting?.id;
+            if (!meetingId) {
+                throw new Error('Failed to create meeting.');
+            }
+            activeMeetingIdRef.current = meetingId;
+            queryClient.setQueryData(['meeting', String(meetingId)], {
+                id: meetingId,
+                title: `Meeting ${meetingId}`,
+                date: new Date().toISOString(),
+                summary: '',
+                participants: [],
+                messages: [],
+                actionItems: [],
+            });
+            navigate(`/meetings/${meetingId}`);
+
             const displayStream = await navigator.mediaDevices.getDisplayMedia({
                 video: true,
                 audio: true,
@@ -104,7 +165,25 @@ const MainLayout = ({ username = 'John Doe', userImage = 'https://via.placeholde
             socket.on('meeting-audio-processed', (payload) => {
                 console.log('[meeting-client] server response', payload);
                 if (payload) {
-                    setServerMessage(payload);
+                    const meetingMessage = typeof payload === 'string' ? payload : payload?.message || '';
+                    setServerMessage(meetingMessage);
+                    const targetMeetingId = activeMeetingIdRef.current;
+                    if (meetingMessage && targetMeetingId) {
+                        fetchWithAuth(`/meetings/${targetMeetingId}/messages`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ content: meetingMessage, role: 'assistant' }),
+                        })
+                            .then((response) => response.json())
+                            .then((messagePayload) => {
+                                if (messagePayload?.message) {
+                                    appendMessageToMeetingCache(targetMeetingId, messagePayload.message);
+                                }
+                            })
+                            .catch((error) => {
+                                console.error('[meeting-client] failed to append stream message', error);
+                            });
+                    }
                 }
             });
 
@@ -130,6 +209,7 @@ const MainLayout = ({ username = 'John Doe', userImage = 'https://via.placeholde
                 const arrayBuffer = await event.data.arrayBuffer();
                 const binaryPayload = new Uint8Array(arrayBuffer);
                 const meta = {
+                    meetingId: Number(activeMeetingIdRef.current),
                     chunkIndex: Number(chunkIndexRef.current),
                     durationMs: Number(durationMs),
                     mimeType: String(event.data.type || preferredMimeType),
@@ -148,18 +228,20 @@ const MainLayout = ({ username = 'John Doe', userImage = 'https://via.placeholde
 
             const [videoTrack] = displayStream.getVideoTracks();
             if (videoTrack) {
-                videoTrack.addEventListener('ended', stopCapture);
+                videoTrack.addEventListener('ended', () => {
+                    stopCapture();
+                });
             }
 
             setCaptureState('capturing');
         } catch (error) {
-            stopCapture();
+            await stopCapture();
             setCaptureError(error?.message || 'Unable to capture tab audio.');
         }
-    }, [stopCapture]);
+    }, [appendMessageToMeetingCache, navigate, queryClient, stopCapture]);
 
     return (
-        <div className="">
+        <div className="main-layout">
             <div className="topbar" role="banner">
                 <div className="topbar-left">
                     <div className="project-name">meetAI</div>
