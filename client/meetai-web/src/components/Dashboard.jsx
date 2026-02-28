@@ -74,7 +74,6 @@ export default function Dashboard() {
                 <h3>{meeting.title}</h3>
                 <p className="recap-date">{meeting.date}</p>
               </div>
-              <p className="recap-summary">{moment(meeting.date).format('DD-MMM-YYYY')}</p>
               <button
                 type="button"
                 className="text-button"

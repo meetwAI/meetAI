@@ -16,7 +16,7 @@ app.use(
   cors({
     origin: [FRONTEND_ORIGIN],
     credentials: true,
-    methods: ['GET', 'POST'],
+    methods: ['GET', 'POST', 'PATCH', 'DELETE'],
     exposedHeaders: ['x-access-token'],
   }),
 );
@@ -91,6 +91,14 @@ const verifyAccess = (req, res, next) => {
           return res.status(proxyRes.statusCode || 401).json({ message: 'Unauthorized' });
         }
 
+        let verifiedUser = null;
+        try {
+          const parsed = JSON.parse(data || '{}');
+          verifiedUser = parsed?.user || null;
+        } catch (_error) {
+          verifiedUser = null;
+        }
+
         const nextAccessToken = proxyRes.headers['x-access-token'];
         if (nextAccessToken) {
           res.set('x-access-token', nextAccessToken);
@@ -104,6 +112,7 @@ const verifyAccess = (req, res, next) => {
           res.set('set-cookie', proxyRes.headers['set-cookie']);
         }
 
+        req.authUser = verifiedUser;
         return next();
       });
     },
@@ -127,6 +136,7 @@ const proxyMeetingServiceGet = (path, req, res) => {
       headers: {
         Accept: 'application/json',
         Authorization: req.authToken ? `Bearer ${req.authToken}` : req.headers.authorization || '',
+        'x-user-id': req.authUser?.id ? String(req.authUser.id) : '',
       },
     },
     (proxyRes) => {
@@ -164,6 +174,81 @@ const proxyMeetingServicePost = (path, req, res) => {
         'Content-Type': 'application/json',
         'Content-Length': Buffer.byteLength(body),
         Authorization: req.authToken ? `Bearer ${req.authToken}` : req.headers.authorization || '',
+        'x-user-id': req.authUser?.id ? String(req.authUser.id) : '',
+      },
+    },
+    (proxyRes) => {
+      let data = '';
+      proxyRes.on('data', (chunk) => {
+        data += chunk;
+      });
+      proxyRes.on('end', () => {
+        res
+          .status(proxyRes.statusCode || 200)
+          .set('content-type', proxyRes.headers['content-type'] || 'application/json')
+          .send(data);
+      });
+    },
+  );
+
+  proxyReq.on('error', (error) => {
+    console.error('[gateway] meeting service proxy error', error);
+    res.status(502).json({ message: 'Meeting service unavailable.' });
+  });
+
+  proxyReq.write(body);
+  proxyReq.end();
+};
+
+const proxyMeetingServiceDelete = (path, req, res) => {
+  const targetUrl = new URL(path, MEETING_SERVICE_URL);
+  const client = targetUrl.protocol === 'https:' ? https : http;
+  const proxyReq = client.request(
+    targetUrl,
+    {
+      method: 'DELETE',
+      headers: {
+        Accept: 'application/json',
+        Authorization: req.authToken ? `Bearer ${req.authToken}` : req.headers.authorization || '',
+        'x-user-id': req.authUser?.id ? String(req.authUser.id) : '',
+      },
+    },
+    (proxyRes) => {
+      let data = '';
+      proxyRes.on('data', (chunk) => {
+        data += chunk;
+      });
+      proxyRes.on('end', () => {
+        res
+          .status(proxyRes.statusCode || 200)
+          .set('content-type', proxyRes.headers['content-type'] || 'application/json')
+          .send(data);
+      });
+    },
+  );
+
+  proxyReq.on('error', (error) => {
+    console.error('[gateway] meeting service proxy error', error);
+    res.status(502).json({ message: 'Meeting service unavailable.' });
+  });
+
+  proxyReq.end();
+};
+
+const proxyMeetingServicePatch = (path, req, res) => {
+  const targetUrl = new URL(path, MEETING_SERVICE_URL);
+  const client = targetUrl.protocol === 'https:' ? https : http;
+  const body = JSON.stringify(req.body || {});
+  const proxyReq = client.request(
+    targetUrl,
+    {
+      method: 'PATCH',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+        Authorization: req.authToken ? `Bearer ${req.authToken}` : req.headers.authorization || '',
+        'x-user-id': req.authUser?.id ? String(req.authUser.id) : '',
       },
     },
     (proxyRes) => {
@@ -198,6 +283,10 @@ app.get('/meetings/dummy', (req, res) => {
   proxyMeetingServiceGet('/meetings/dummy', req, res);
 });
 
+app.post('/meetings', (req, res) => {
+  proxyMeetingServicePost('/meetings', req, res);
+});
+
 app.get('/meetings/recent', (req, res) => {
   const params = new URLSearchParams(req.query || {});
   const queryString = params.toString();
@@ -215,12 +304,27 @@ app.post('/meetings/:meetingId/messages', (req, res) => {
   proxyMeetingServicePost(path, req, res);
 });
 
+app.post('/meetings/:meetingId/complete', (req, res) => {
+  const path = `/meetings/${encodeURIComponent(req.params.meetingId)}/complete`;
+  proxyMeetingServicePost(path, req, res);
+});
+
+app.patch('/meetings/:meetingId/title', (req, res) => {
+  const path = `/meetings/${encodeURIComponent(req.params.meetingId)}/title`;
+  proxyMeetingServicePatch(path, req, res);
+});
+
+app.delete('/meetings/:meetingId', (req, res) => {
+  const path = `/meetings/${encodeURIComponent(req.params.meetingId)}`;
+  proxyMeetingServiceDelete(path, req, res);
+});
+
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
     origin: [FRONTEND_ORIGIN],
     credentials: true,
-    methods: ['GET', 'POST'],
+    methods: ['GET', 'POST', 'PATCH', 'DELETE'],
   },
 });
 
@@ -240,7 +344,6 @@ const isBinaryPayload = (payload) =>
   (payload && typeof payload === 'object' && payload.type === 'Buffer');
 
 io.use((socket, next) => {
-  debugger
   const token = socket.handshake.auth?.token;
   if (!token) {
     return next(new Error('Unauthorized'));

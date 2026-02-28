@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
 import { fetchWithAuth } from '../api/fetchWithAuth';
@@ -10,6 +10,10 @@ export default function PreviousMeetings() {
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [draftMessage, setDraftMessage] = useState('');
   const [isSending, setIsSending] = useState(false);
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [renameError, setRenameError] = useState('');
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { meetingid } = useParams();
@@ -41,10 +45,14 @@ export default function PreviousMeetings() {
 
   const {
     data: routeMeeting,
-    isLoading: isRouteMeetingLoading,
   } = useQuery({
     queryKey: ['meeting', meetingid],
     enabled: Boolean(meetingid),
+    initialData: () => {
+      if (!meetingid) return undefined;
+      const fromList = meetings.find((meeting) => String(meeting.id) === String(meetingid));
+      return fromList || undefined;
+    },
     queryFn: async () => {
       const response = await fetchWithAuth(`/meetings/${meetingid}`);
       if (!response.ok) {
@@ -65,6 +73,11 @@ export default function PreviousMeetings() {
       setSelectedId((prev) => prev ?? meetings[0].id);
     }
   }, [meetings, meetingid]);
+
+  useEffect(() => {
+    if (!meetingid) return;
+    queryClient.invalidateQueries({ queryKey: ['meeting', String(meetingid)] });
+  }, [meetingid, queryClient]);
 
   const normalizedMeetings = useMemo(() => {
     const baseMeetings = meetings.map((meeting) => ({
@@ -100,7 +113,7 @@ export default function PreviousMeetings() {
     [normalizedMeetings, selectedId]
   );
 
-  const appendMessageToCache = (meetingId, message) => {
+  const appendMessageToCache = useCallback((meetingId, message) => {
     queryClient.setQueryData(['meetings', 'dummy'], (current) => {
       const currentMeetings = Array.isArray(current) ? current : [];
       return currentMeetings.map((meeting) => {
@@ -121,7 +134,28 @@ export default function PreviousMeetings() {
         return { ...current, messages: [...messages, message] };
       });
     }
-  };
+  }, [meetingid, queryClient]);
+
+  const renameMeetingInCache = useCallback((meetingId, title) => {
+    queryClient.setQueryData(['meetings', 'dummy'], (current) => {
+      const currentMeetings = Array.isArray(current) ? current : [];
+      return currentMeetings.map((meeting) => {
+        if (String(meeting.id) !== String(meetingId)) {
+          return meeting;
+        }
+        return { ...meeting, title };
+      });
+    });
+
+    if (meetingid && String(meetingid) === String(meetingId)) {
+      queryClient.setQueryData(['meeting', meetingid], (current) => {
+        if (!current || String(current.id) !== String(meetingId)) {
+          return current;
+        }
+        return { ...current, title };
+      });
+    }
+  }, [meetingid, queryClient]);
 
   const handleSendMessage = async () => {
     if (!selectedMeeting || isSending) {
@@ -151,6 +185,84 @@ export default function PreviousMeetings() {
     }
   };
 
+  const handleDeleteMeeting = useCallback(async () => {
+    if (!selectedMeeting || isDeleting) {
+      return;
+    }
+
+    const meetingToDelete = selectedMeeting.id;
+    const shouldDelete = window.confirm('Delete this meeting permanently?');
+    if (!shouldDelete) {
+      return;
+    }
+
+    setDeleteError('');
+    setIsDeleting(true);
+
+    try {
+      await fetchWithAuth(`/meetings/${meetingToDelete}`, { method: 'DELETE' });
+
+      queryClient.setQueryData(['meetings', 'dummy'], (current) => {
+        const currentMeetings = Array.isArray(current) ? current : [];
+        return currentMeetings.filter((meeting) => String(meeting.id) !== String(meetingToDelete));
+      });
+      queryClient.removeQueries({ queryKey: ['meeting', String(meetingToDelete)], exact: true });
+      queryClient.invalidateQueries({ queryKey: ['meetings', 'recent', 3] });
+
+      const remaining = normalizedMeetings.filter((meeting) => String(meeting.id) !== String(meetingToDelete));
+      if (remaining.length > 0) {
+        const nextMeetingId = remaining[0].id;
+        setSelectedId(nextMeetingId);
+        navigate(`/meetings/${nextMeetingId}`);
+      } else {
+        setSelectedId(null);
+        navigate('/meetings');
+      }
+    } catch (error) {
+      setDeleteError(error?.message || 'Failed to delete meeting.');
+    } finally {
+      setIsDeleting(false);
+    }
+  }, [isDeleting, navigate, normalizedMeetings, queryClient, selectedMeeting]);
+
+  const handleRenameMeeting = useCallback(async () => {
+    if (!selectedMeeting || isRenaming) {
+      return;
+    }
+
+    const currentTitle = String(selectedMeeting.title || '').trim();
+    const nextTitleRaw = window.prompt('Enter a new meeting title', currentTitle);
+    if (nextTitleRaw === null) {
+      return;
+    }
+
+    const nextTitle = nextTitleRaw.trim();
+    if (!nextTitle || nextTitle === currentTitle) {
+      return;
+    }
+
+    setRenameError('');
+    setIsRenaming(true);
+
+    try {
+      const response = await fetchWithAuth(`/meetings/${selectedMeeting.id}/title`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: nextTitle }),
+      });
+
+      const payload = await response.json().catch(() => null);
+      const titleFromServer = String(payload?.title || nextTitle).trim() || nextTitle;
+
+      renameMeetingInCache(selectedMeeting.id, titleFromServer);
+      queryClient.invalidateQueries({ queryKey: ['meetings', 'recent', 3] });
+    } catch (error) {
+      setRenameError(error?.message || 'Failed to rename meeting.');
+    } finally {
+      setIsRenaming(false);
+    }
+  }, [isRenaming, queryClient, renameMeetingInCache, selectedMeeting]);
+
   return (
     <div className="previous-meetings">
       <section className="meeting-list">
@@ -159,7 +271,7 @@ export default function PreviousMeetings() {
           <p>Click a meeting to review the recap and conversation.</p>
         </div>
 
-        {(isLoading || isRouteMeetingLoading) && <p>Loading meetings…</p>}
+        {isLoading && <p>Loading meetings...</p>}
         {error && <p>{error.message || 'Unable to load meetings'}</p>}
         <div className="meeting-cards">
           {normalizedMeetings.map((meeting) => (
@@ -169,6 +281,7 @@ export default function PreviousMeetings() {
               className={`meeting-card${String(meeting.id) === String(selectedId) ? ' active' : ''}`}
               onClick={() => {
                 setSelectedId(meeting.id);
+                queryClient.invalidateQueries({ queryKey: ['meeting', String(meeting.id)] });
                 navigate(`/meetings/${meeting.id}`);
                 setShowAttachMenu(false);
               }}
@@ -195,14 +308,34 @@ export default function PreviousMeetings() {
                 <h2>{selectedMeeting.title}</h2>
                 <p className="meeting-detail-date">{moment(selectedMeeting.date).format('DD-MMM-YYYY')}</p>
               </div>
-              <div className="meeting-tags">
-                {selectedMeeting.participants.map((name) => (
-                  <span key={name} className="meeting-tag">
-                    {name}
-                  </span>
-                ))}
+              <div className="meeting-header-actions">
+                <div className="meeting-tags">
+                  {selectedMeeting.participants.map((name) => (
+                    <span key={name} className="meeting-tag">
+                      {name}
+                    </span>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  className="rename-meeting-button"
+                  onClick={handleRenameMeeting}
+                  disabled={isRenaming}
+                >
+                  {isRenaming ? 'Renaming...' : 'Rename meeting'}
+                </button>
+                <button
+                  type="button"
+                  className="delete-meeting-button"
+                  onClick={handleDeleteMeeting}
+                  disabled={isDeleting}
+                >
+                  {isDeleting ? 'Deleting...' : 'Delete meeting'}
+                </button>
               </div>
             </header>
+            {renameError && <p className="recap-summary">{renameError}</p>}
+            {deleteError && <p className="recap-summary">{deleteError}</p>}
 
             <div className="meeting-detail-summary">
               <h4>Summary</h4>
@@ -282,3 +415,5 @@ export default function PreviousMeetings() {
     </div>
   );
 }
+
+
