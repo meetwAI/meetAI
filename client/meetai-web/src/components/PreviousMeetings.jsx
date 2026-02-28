@@ -1,11 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useNavigate, useParams } from 'react-router-dom';
 import { fetchWithAuth } from '../api/fetchWithAuth';
+import moment from 'moment';
 
 
 export default function PreviousMeetings() {
   const [selectedId, setSelectedId] = useState(null);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
+  const [draftMessage, setDraftMessage] = useState('');
+  const [isSending, setIsSending] = useState(false);
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const { meetingid } = useParams();
 
   const {
     data: meetings = [],
@@ -32,29 +39,117 @@ export default function PreviousMeetings() {
     staleTime: 10_000,
   });
 
+  const {
+    data: routeMeeting,
+    isLoading: isRouteMeetingLoading,
+  } = useQuery({
+    queryKey: ['meeting', meetingid],
+    enabled: Boolean(meetingid),
+    queryFn: async () => {
+      const response = await fetchWithAuth(`/meetings/${meetingid}`);
+      if (!response.ok) {
+        return null;
+      }
+      const payload = await response.json().catch(() => null);
+      return payload;
+    },
+    staleTime: 10_000,
+  });
+
   useEffect(() => {
+    if (meetingid) {
+      setSelectedId(meetingid);
+      return;
+    }
     if (meetings?.length) {
       setSelectedId((prev) => prev ?? meetings[0].id);
     }
-  }, [meetings]);
+  }, [meetings, meetingid]);
 
-  const normalizedMeetings = useMemo(
-    () =>
-      meetings.map((meeting) => ({
+  const normalizedMeetings = useMemo(() => {
+    const baseMeetings = meetings.map((meeting) => ({
         id: meeting.id,
         title: meeting.title,
         date: meeting.date,
         summary: meeting.summary,
         participants: Array.isArray(meeting.participants) ? meeting.participants : [],
         messages: Array.isArray(meeting.messages) ? meeting.messages : [],
-      })),
-    [meetings]
-  );
+        actionItems: Array.isArray(meeting.actionItems) ? meeting.actionItems : [],
+      }));
+
+    if (!routeMeeting) {
+      return baseMeetings;
+    }
+
+    const routeNormalized = {
+      id: routeMeeting.id,
+      title: routeMeeting.title,
+      date: routeMeeting.date,
+      summary: routeMeeting.summary,
+      participants: Array.isArray(routeMeeting.participants) ? routeMeeting.participants : [],
+      messages: Array.isArray(routeMeeting.messages) ? routeMeeting.messages : [],
+      actionItems: Array.isArray(routeMeeting.actionItems) ? routeMeeting.actionItems : [],
+    };
+
+    const hasRouteMeeting = baseMeetings.some((meeting) => String(meeting.id) === String(routeNormalized.id));
+    return hasRouteMeeting ? baseMeetings : [routeNormalized, ...baseMeetings];
+  }, [meetings, routeMeeting]);
 
   const selectedMeeting = useMemo(
-    () => normalizedMeetings.find((meeting) => meeting.id === selectedId),
+    () => normalizedMeetings.find((meeting) => String(meeting.id) === String(selectedId)),
     [normalizedMeetings, selectedId]
   );
+
+  const appendMessageToCache = (meetingId, message) => {
+    queryClient.setQueryData(['meetings', 'dummy'], (current) => {
+      const currentMeetings = Array.isArray(current) ? current : [];
+      return currentMeetings.map((meeting) => {
+        if (String(meeting.id) !== String(meetingId)) {
+          return meeting;
+        }
+        const messages = Array.isArray(meeting.messages) ? meeting.messages : [];
+        return { ...meeting, messages: [...messages, message] };
+      });
+    });
+
+    if (meetingid && String(meetingid) === String(meetingId)) {
+      queryClient.setQueryData(['meeting', meetingid], (current) => {
+        if (!current || String(current.id) !== String(meetingId)) {
+          return current;
+        }
+        const messages = Array.isArray(current.messages) ? current.messages : [];
+        return { ...current, messages: [...messages, message] };
+      });
+    }
+  };
+
+  const handleSendMessage = async () => {
+    if (!selectedMeeting || isSending) {
+      return;
+    }
+
+    const content = draftMessage.trim();
+    if (!content) {
+      return;
+    }
+
+    setIsSending(true);
+    try {
+      const response = await fetchWithAuth(`/meetings/${selectedMeeting.id}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content, role: 'user' }),
+      });
+
+      const payload = await response.json().catch(() => null);
+      if (payload?.message) {
+        appendMessageToCache(selectedMeeting.id, payload.message);
+      }
+      setDraftMessage('');
+    } finally {
+      setIsSending(false);
+    }
+  };
 
   return (
     <div className="previous-meetings">
@@ -64,22 +159,23 @@ export default function PreviousMeetings() {
           <p>Click a meeting to review the recap and conversation.</p>
         </div>
 
-        {isLoading && <p>Loading meetings…</p>}
+        {(isLoading || isRouteMeetingLoading) && <p>Loading meetings…</p>}
         {error && <p>{error.message || 'Unable to load meetings'}</p>}
         <div className="meeting-cards">
           {normalizedMeetings.map((meeting) => (
             <button
               key={meeting.id}
               type="button"
-              className={`meeting-card${meeting.id === selectedId ? ' active' : ''}`}
+              className={`meeting-card${String(meeting.id) === String(selectedId) ? ' active' : ''}`}
               onClick={() => {
                 setSelectedId(meeting.id);
+                navigate(`/meetings/${meeting.id}`);
                 setShowAttachMenu(false);
               }}
             >
               <div className="meeting-card-header">
                 <h3>{meeting.title}</h3>
-                <span className="meeting-date">{meeting.date}</span>
+                <span className="meeting-date">{moment(meeting.date).format('DD-MMM-YYYY')}</span>
               </div>
               <p className="meeting-summary">{meeting.summary}</p>
               <div className="meeting-meta">
@@ -97,7 +193,7 @@ export default function PreviousMeetings() {
             <header className="meeting-detail-header">
               <div>
                 <h2>{selectedMeeting.title}</h2>
-                <p className="meeting-detail-date">{selectedMeeting.date}</p>
+                <p className="meeting-detail-date">{moment(selectedMeeting.date).format('DD-MMM-YYYY')}</p>
               </div>
               <div className="meeting-tags">
                 {selectedMeeting.participants.map((name) => (
@@ -113,6 +209,17 @@ export default function PreviousMeetings() {
               <p>{selectedMeeting.summary}</p>
             </div>
 
+            {!!selectedMeeting.actionItems?.length && (
+              <div className="meeting-detail-summary">
+                <h4>Action Items</h4>
+                <ul>
+                  {selectedMeeting.actionItems.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             <div className="meeting-messages">
               {selectedMeeting.messages.map((message) => (
                 <div
@@ -121,7 +228,7 @@ export default function PreviousMeetings() {
                 >
                   <div className="message-bubble">
                     <p>{message.text}</p>
-                    <span className="message-time">{message.time}</span>
+                    <span className="message-time">{message.time ? moment(message.time).format('DD-MMM-YYYY HH:mm') : ''}</span>
                   </div>
                 </div>
               ))}
@@ -146,8 +253,21 @@ export default function PreviousMeetings() {
               <input
                 type="text"
                 placeholder="Ask a question about this meeting..."
+                value={draftMessage}
+                onChange={(event) => setDraftMessage(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    handleSendMessage();
+                  }
+                }}
               />
-              <button type="button" className="send-button">
+              <button
+                type="button"
+                className="send-button"
+                onClick={handleSendMessage}
+                disabled={isSending}
+              >
                 Send
               </button>
             </div>

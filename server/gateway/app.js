@@ -151,6 +151,44 @@ const proxyMeetingServiceGet = (path, req, res) => {
   proxyReq.end();
 };
 
+const proxyMeetingServicePost = (path, req, res) => {
+  const targetUrl = new URL(path, MEETING_SERVICE_URL);
+  const client = targetUrl.protocol === 'https:' ? https : http;
+  const body = JSON.stringify(req.body || {});
+  const proxyReq = client.request(
+    targetUrl,
+    {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+        Authorization: req.authToken ? `Bearer ${req.authToken}` : req.headers.authorization || '',
+      },
+    },
+    (proxyRes) => {
+      let data = '';
+      proxyRes.on('data', (chunk) => {
+        data += chunk;
+      });
+      proxyRes.on('end', () => {
+        res
+          .status(proxyRes.statusCode || 200)
+          .set('content-type', proxyRes.headers['content-type'] || 'application/json')
+          .send(data);
+      });
+    },
+  );
+
+  proxyReq.on('error', (error) => {
+    console.error('[gateway] meeting service proxy error', error);
+    res.status(502).json({ message: 'Meeting service unavailable.' });
+  });
+
+  proxyReq.write(body);
+  proxyReq.end();
+};
+
 app.post('/login', loginRateLimiter, (req, res) => proxyAuth('/login', req, res));
 app.post('/refresh', (req, res) => proxyAuth('/refresh', req, res));
 
@@ -158,6 +196,23 @@ app.use(verifyAccess);
 
 app.get('/meetings/dummy', (req, res) => {
   proxyMeetingServiceGet('/meetings/dummy', req, res);
+});
+
+app.get('/meetings/recent', (req, res) => {
+  const params = new URLSearchParams(req.query || {});
+  const queryString = params.toString();
+  const path = queryString ? `/meetings/recent?${queryString}` : '/meetings/recent';
+  proxyMeetingServiceGet(path, req, res);
+});
+
+app.get('/meetings/:meetingId', (req, res) => {
+  const path = `/meetings/${encodeURIComponent(req.params.meetingId)}`;
+  proxyMeetingServiceGet(path, req, res);
+});
+
+app.post('/meetings/:meetingId/messages', (req, res) => {
+  const path = `/meetings/${encodeURIComponent(req.params.meetingId)}/messages`;
+  proxyMeetingServicePost(path, req, res);
 });
 
 const server = http.createServer(app);

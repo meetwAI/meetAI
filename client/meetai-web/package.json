@@ -21,6 +21,7 @@
     "react-router": "^7.9.6",
     "react-router-dom": "^7.9.6",
     "socket.io-client": "^4.8.1"
+    ,"moment": "^2.29.4"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",

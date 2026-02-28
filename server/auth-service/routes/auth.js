@@ -1,6 +1,5 @@
 const express = require('express');
-const path = require('path');
-const fs = require('fs');
+const { query } = require('../../db/client');
 const {
   issueTokens,
   verifyRefreshToken,
@@ -9,7 +8,6 @@ const {
 } = require('../services/tokenService');
 
 const router = express.Router();
-const USERS_PATH = path.join(__dirname, '..', '..', 'users.json');
 
 const setRefreshCookie = (res, refreshToken) => {
   res.cookie('meetai_refresh', refreshToken, {
@@ -27,19 +25,41 @@ const buildUser = (user) => ({
   name: user.name,
 });
 
+const getUserByUsername = async (username) => {
+  try {
+    const result = await query(
+      `SELECT id, name, user_name AS username, password
+       FROM users
+       WHERE user_name = $1
+       LIMIT 1`,
+      [username],
+    );
+    return result.rows[0] || null;
+  } catch (error) {
+    if (!String(error.message || '').toLowerCase().includes('column "user_name" does not exist')) {
+      throw error;
+    }
+
+    const fallback = await query(
+      `SELECT id, name, username, password
+       FROM users
+       WHERE username = $1
+       LIMIT 1`,
+      [username],
+    );
+    return fallback.rows[0] || null;
+  }
+};
+
 router.post('/login', async (req, res) => {
   const { username, password } = req.body || {};
   if (!username || !password) {
     return res.status(400).json({ message: 'Username and password are required.' });
   }
 
-  const raw = fs.readFileSync(USERS_PATH, 'utf-8');
-  const data = JSON.parse(raw);
-  const user = data.users.find(
-    (item) => item.username === username && item.password === password,
-  );
+  const user = await getUserByUsername(username);
 
-  if (!user) {
+  if (!user || user.password !== password) {
     return res.status(401).json({ message: 'Invalid credentials.' });
   }
 

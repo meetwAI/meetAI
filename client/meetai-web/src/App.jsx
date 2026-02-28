@@ -31,6 +31,7 @@ function App() {
         >
           <Route index element={<Dashboard />} />
           <Route path="meetings" element={<PreviousMeetings />} />
+          <Route path="meetings/:meetingid" element={<PreviousMeetings />} />
           <Route path="profile" element={<Profile />} />
         </Route>
       </Routes>
