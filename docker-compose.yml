@@ -20,6 +20,7 @@ services:
       AUTH_PORT: 4020
       FRONTEND_ORIGIN: http://localhost:5173
       REDIS_URL: redis://redis:6379
+      DATABASE_URL: postgresql://meetai:meetai_pass@postgres:5432/meetai_dev
       JWT_SECRET: meetai_dev_secret
       JWT_TTL_SECONDS: 20
       REFRESH_TTL_SECONDS: 864000
@@ -28,6 +29,8 @@ services:
       - "4020:4020"
     depends_on:
       redis:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     healthcheck:
       test:
@@ -49,6 +52,7 @@ services:
     command: node meeting-service/index.js
     environment:
       PORT: 4001
+      DATABASE_URL: postgresql://meetai:meetai_pass@postgres:5432/meetai_dev
       NODE_ENV: development
     ports:
       - "4001:4001"
@@ -63,6 +67,9 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
 
   gateway:
