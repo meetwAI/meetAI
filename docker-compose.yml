@@ -113,3 +113,27 @@ services:
       gateway:
         condition: service_healthy
     restart: unless-stopped
+
+  postgres:
+    build:
+      context: ./server/db/postgres
+      dockerfile: Dockerfile
+    container_name: meetai-postgres
+    environment:
+      POSTGRES_USER: meetai
+      POSTGRES_PASSWORD: meetai_pass
+      POSTGRES_DB: meetai_dev
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./server/db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+
+volumes:
+  pgdata:
