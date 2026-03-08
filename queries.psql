@@ -1,0 +1,15 @@
+-- SELECT * FROM users;
+
+
+-- \dt
+
+-- Schema |      Name      | Type  | Owner
+-- --------+----------------+-------+--------
+--  public | chats          | table | meetai
+--  public | meeting_chunks | table | meetai
+--  public | meetings       | table | meetai
+--  public | messages       | table | meetai
+--  public | users          | table | meetai
+
+
+select * from chats
