@@ -5,7 +5,9 @@ import MainLayout from './components/MainLayout';
 import { useSignals } from '@preact/signals-react/runtime';
 import PreviousMeetings from './components/PreviousMeetings';
 import Login from './components/Login';
+import Signup from './components/Signup';
 import Profile from './components/Profile';
+import ProfileSetup from './components/ProfileSetup';
 
 import LandingPage from './components/LandingPage';
 
@@ -25,6 +27,16 @@ const AuthRoute = ({ children }) => {
   return children;
 };
 
+// Profile setup is only reachable with a token (right after signup).
+// If no token, redirect to signup.
+const ProfileSetupRoute = ({ children }) => {
+  const token = localStorage.getItem('meetai_token');
+  if (!token) {
+    return <Navigate to="/signup" replace />;
+  }
+  return children;
+};
+
 function App() {
   useSignals()
   return (
@@ -34,6 +46,18 @@ function App() {
           <AuthRoute>
             <Login />
           </AuthRoute>
+        } />
+
+        <Route path="/signup" element={
+          <AuthRoute>
+            <Signup />
+          </AuthRoute>
+        } />
+
+        <Route path="/profile-setup" element={
+          <ProfileSetupRoute>
+            <ProfileSetup />
+          </ProfileSetupRoute>
         } />
 
         <Route

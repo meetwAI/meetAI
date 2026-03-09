@@ -14,7 +14,6 @@
     "@tanstack/react-query": "^5.90.10",
     "axios": "^1.13.2",
     "bootstrap": "^5.3.8",
-    "cobe": "^0.6.5",
     "lucide-react": "^0.555.0",
     "moment": "^2.29.4",
     "react": "^19.2.0",

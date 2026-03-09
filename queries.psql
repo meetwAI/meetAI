@@ -12,4 +12,6 @@
 --  public | users          | table | meetai
 
 
-select * from chats
+SELECT column_name
+FROM information_schema.columns
+WHERE table_name = 'users';

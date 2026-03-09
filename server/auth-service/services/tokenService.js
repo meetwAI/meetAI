@@ -65,10 +65,20 @@ const verifyRefreshToken = async (token) => {
   return payload;
 };
 
+const revokeToken = async (token, tokenType) => {
+  if (!token || !tokenType) {
+    return;
+  }
+
+  const prefix = tokenType === 'access' ? 'auth:access:' : 'auth:refresh:';
+  await redisClient.del(`${prefix}${hashToken(token)}`);
+};
+
 module.exports = {
   issueTokens,
   verifyAccessToken,
   verifyRefreshToken,
+  revokeToken,
   redisClient,
   JWT_SECRET,
   JWT_TTL_SECONDS,
