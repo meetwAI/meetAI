@@ -6,7 +6,7 @@
   --zen-brown-light: #8A705E;
   --zen-cream: #F5F0E5;
   --zen-green: #6B8E23;
-  --zen-brown-littledarker:#1e1c1b;
+  --zen-brown-littledarker: #1e1c1b;
   font-family: 'Quicksand', sans-serif;
   line-height: 1.5;
   font-weight: 400;
@@ -26,6 +26,7 @@ a {
   color: #646cff;
   text-decoration: inherit;
 }
+
 a:hover {
   color: #535bf2;
 }
@@ -54,14 +55,12 @@ body {
 /* Glassy Text Effects */
 .text-glassy {
   color: transparent;
-  background-image: linear-gradient(
-    to bottom,
-    rgba(255, 255, 255, 0.9) 0%,
-    rgba(255, 255, 255, 0.6) 20%,
-    rgba(255, 255, 255, 0.3) 50%,
-    rgba(255, 255, 255, 0.6) 80%,
-    rgba(255, 255, 255, 0.9) 100%
-  );
+  background-image: linear-gradient(to bottom,
+      rgba(255, 255, 255, 0.9) 0%,
+      rgba(255, 255, 255, 0.6) 20%,
+      rgba(255, 255, 255, 0.3) 50%,
+      rgba(255, 255, 255, 0.6) 80%,
+      rgba(255, 255, 255, 0.9) 100%);
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-stroke-width: 0.2px;
@@ -70,12 +69,10 @@ body {
 
 .text-glassy-subtle {
   color: transparent;
-  background-image: linear-gradient(
-    to bottom,
-    rgba(255, 255, 255, 0.7) 0%,
-    rgba(255, 255, 255, 0.4) 50%,
-    rgba(255, 255, 255, 0.7) 100%
-  );
+  background-image: linear-gradient(to bottom,
+      rgba(255, 255, 255, 0.7) 0%,
+      rgba(255, 255, 255, 0.4) 50%,
+      rgba(255, 255, 255, 0.7) 100%);
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-stroke-width: 0.1px;
@@ -85,14 +82,12 @@ body {
 .text-glassy-balanced {
   position: relative;
   color: transparent;
-  background-image: linear-gradient(
-    to bottom,
-    rgba(255, 255, 255, 1) 0%,
-    rgba(255, 255, 255, 0.95) 20%,
-    rgba(255, 255, 255, 0.75) 50%,
-    rgba(255, 255, 255, 0.95) 80%,
-    rgba(255, 255, 255, 1) 100%
-  );
+  background-image: linear-gradient(to bottom,
+      rgba(255, 255, 255, 1) 0%,
+      rgba(255, 255, 255, 0.95) 20%,
+      rgba(255, 255, 255, 0.75) 50%,
+      rgba(255, 255, 255, 0.95) 80%,
+      rgba(255, 255, 255, 1) 100%);
   -webkit-background-clip: text;
   background-clip: text;
   mix-blend-mode: screen;
@@ -119,9 +114,11 @@ button {
   cursor: pointer;
   transition: border-color 0.25s;
 }
+
 button:hover {
   border-color: #646cff;
 }
+
 button:focus,
 button:focus-visible {
   outline: 4px auto -webkit-focus-ring-color;
@@ -132,10 +129,61 @@ button:focus-visible {
     color: #213547;
     background-color: #ffffff;
   }
+
   a:hover {
     color: #747bff;
   }
+
   button {
     background-color: #f9f9f9;
+  }
+}
+
+/* Animations added to keep UI lively */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideRight {
+  from {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
   }
 }

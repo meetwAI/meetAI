@@ -11,7 +11,7 @@ const queryClient = new QueryClient({
       if (error?.status === 401) {
         localStorage.removeItem('meetai_token');
         localStorage.removeItem('meetai_user');
-        window.location.assign('/login');
+        window.location.assign('/');
       }
     },
   }),
@@ -25,8 +25,8 @@ const queryClient = new QueryClient({
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
-      <QueryClientProvider client={queryClient}>
-        <App />
-      </QueryClientProvider>
+    <QueryClientProvider client={queryClient}>
+      <App />
+    </QueryClientProvider>
   </StrictMode>,
 )

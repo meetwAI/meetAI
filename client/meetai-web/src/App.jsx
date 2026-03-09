@@ -7,10 +7,20 @@ import PreviousMeetings from './components/PreviousMeetings';
 import Login from './components/Login';
 import Profile from './components/Profile';
 
+import LandingPage from './components/LandingPage';
+
 const RequireAuth = ({ children }) => {
   const token = localStorage.getItem('meetai_token');
   if (!token) {
-    return <Navigate to="/login" replace />;
+    return <LandingPage />;
+  }
+  return children;
+};
+
+const AuthRoute = ({ children }) => {
+  const token = localStorage.getItem('meetai_token');
+  if (token) {
+    return <Navigate to="/" replace />;
   }
   return children;
 };
@@ -20,7 +30,12 @@ function App() {
   return (
     <Router>
       <Routes>
-        <Route path="/login" element={<Login />} />
+        <Route path="/login" element={
+          <AuthRoute>
+            <Login />
+          </AuthRoute>
+        } />
+
         <Route
           path="/"
           element={
