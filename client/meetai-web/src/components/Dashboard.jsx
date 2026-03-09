@@ -68,8 +68,8 @@ export default function Dashboard() {
         </div>
         <div className="recap-cards">
           {isLoading && <p>Loading meetings…</p>}
-          {!isLoading && recentMeetings.map((meeting) => (
-            <article key={meeting.id} className="recap-card">
+          {!isLoading && recentMeetings.map((meeting, index) => (
+            <article key={meeting.id} className="recap-card" style={{ animation: `fadeIn 0.5s ease-out ${index * 0.1 + 0.3}s both` }}>
               <div>
                 <h3>{meeting.title}</h3>
                 <p className="recap-date">{meeting.date}</p>
@@ -92,8 +92,8 @@ export default function Dashboard() {
           <span>This week</span>
         </div>
         <div className="analytics-grid">
-          {analytics.map((item) => (
-            <article key={item.id} className="analytics-card">
+          {analytics.map((item, index) => (
+            <article key={item.id} className="analytics-card" style={{ animation: `scaleIn 0.5s ease-out ${index * 0.1}s both` }}>
               <p className="analytics-label">{item.label}</p>
               <h3>{item.value}</h3>
               <p className="analytics-subtext">{item.subtext}</p>

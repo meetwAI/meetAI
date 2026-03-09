@@ -81,14 +81,14 @@ export default function PreviousMeetings() {
 
   const normalizedMeetings = useMemo(() => {
     const baseMeetings = meetings.map((meeting) => ({
-        id: meeting.id,
-        title: meeting.title,
-        date: meeting.date,
-        summary: meeting.summary,
-        participants: Array.isArray(meeting.participants) ? meeting.participants : [],
-        messages: Array.isArray(meeting.messages) ? meeting.messages : [],
-        actionItems: Array.isArray(meeting.actionItems) ? meeting.actionItems : [],
-      }));
+      id: meeting.id,
+      title: meeting.title,
+      date: meeting.date,
+      summary: meeting.summary,
+      participants: Array.isArray(meeting.participants) ? meeting.participants : [],
+      messages: Array.isArray(meeting.messages) ? meeting.messages : [],
+      actionItems: Array.isArray(meeting.actionItems) ? meeting.actionItems : [],
+    }));
 
     if (!routeMeeting) {
       return baseMeetings;
@@ -274,11 +274,12 @@ export default function PreviousMeetings() {
         {isLoading && <p>Loading meetings...</p>}
         {error && <p>{error.message || 'Unable to load meetings'}</p>}
         <div className="meeting-cards">
-          {normalizedMeetings.map((meeting) => (
+          {normalizedMeetings.map((meeting, index) => (
             <button
               key={meeting.id}
               type="button"
               className={`meeting-card${String(meeting.id) === String(selectedId) ? ' active' : ''}`}
+              style={{ animation: `fadeIn 0.5s ease-out ${index * 0.05}s both` }}
               onClick={() => {
                 setSelectedId(meeting.id);
                 queryClient.invalidateQueries({ queryKey: ['meeting', String(meeting.id)] });

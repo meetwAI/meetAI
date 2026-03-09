@@ -1,0 +1,12 @@
+﻿ M client/meetai-web/src/App.jsx
+ M client/meetai-web/src/components/Dashboard.jsx
+ M client/meetai-web/src/components/MainLayout.css
+ M client/meetai-web/src/components/MainLayout.jsx
+ M client/meetai-web/src/components/PreviousMeetings.jsx
+ M client/meetai-web/src/components/Profile.jsx
+ M client/meetai-web/src/index.css
+ M client/meetai-web/src/main.jsx
+?? client/meetai-web/src/components/LandingPage.css
+?? client/meetai-web/src/components/LandingPage.jsx
+?? git_status.txt
+?? git_status_utf8.txt

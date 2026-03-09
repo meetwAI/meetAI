@@ -25,7 +25,7 @@ export default function Profile() {
   };
 
   return (
-    <div className="profile-page">
+    <div className="profile-page" style={{ animation: 'fadeIn 0.5s ease-out both' }}>
       <h1>Profile</h1>
       <p>Signed in as: {user?.username || 'Unknown'}</p>
       <button type="button" className="primary-button" onClick={handleLogout}>
