@@ -13,6 +13,7 @@ services:
     environment:
       - CHOKIDAR_USEPOLLING=true  # Needed for file watching in Docker on some OS
       - HOST=0.0.0.0   # <- This line is key
+      - VITE_AUTH_URL=http://localhost:4010
     command: npm run dev
 
   web-prod:
