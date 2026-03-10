@@ -12,6 +12,6 @@
 --  public | users          | table | meetai
 
 
-SELECT column_name
-FROM information_schema.columns
-WHERE table_name = 'users';
+-- SELECT column_name
+-- FROM information_schema.columns
+-- WHERE table_name = 'users';
