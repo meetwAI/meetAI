@@ -3,7 +3,19 @@ const crypto = require('crypto');
 const { createClient } = require('redis');
 const { requireEnv, requireNumberEnv } = require('../../config/env');
 
-const JWT_SECRET = requireEnv('JWT_SECRET');
+const readSecrets = () => {
+  const activeSecret = process.env.JWT_ACTIVE_SECRET || process.env.JWT_SECRET || '';
+  if (!activeSecret.trim()) {
+    throw new Error('[env] Missing required environment variable: JWT_ACTIVE_SECRET or JWT_SECRET');
+  }
+  const previousSecrets = String(process.env.JWT_PREVIOUS_SECRETS || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return { activeSecret, previousSecrets };
+};
+
+const { activeSecret: JWT_ACTIVE_SECRET, previousSecrets: JWT_PREVIOUS_SECRETS } = readSecrets();
 const JWT_TTL_SECONDS = requireNumberEnv('JWT_TTL_SECONDS');
 const JWT_TTL = `${JWT_TTL_SECONDS}s`;
 const REFRESH_TTL_SECONDS = requireNumberEnv('REFRESH_TTL_SECONDS');
@@ -68,13 +80,13 @@ const issueTokens = async (user) => {
 
   const accessToken = jwt.sign(
     { sub: user.id, username: user.username, name: user.name, tokenType: 'access' },
-    JWT_SECRET,
+    JWT_ACTIVE_SECRET,
     { expiresIn: JWT_TTL },
   );
 
   const refreshToken = jwt.sign(
     { sub: user.id, username: user.username, name: user.name, tokenType: 'refresh' },
-    JWT_SECRET,
+    JWT_ACTIVE_SECRET,
     { expiresIn: REFRESH_TTL },
   );
 
@@ -87,8 +99,21 @@ const issueTokens = async (user) => {
   return { accessToken, refreshToken };
 };
 
+const verifyWithRotation = (token) => {
+  const secrets = [JWT_ACTIVE_SECRET, ...JWT_PREVIOUS_SECRETS];
+  let lastError = null;
+  for (const secret of secrets) {
+    try {
+      return jwt.verify(token, secret);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error('jwt-verify-failed');
+};
+
 const verifyAccessToken = async (token) => {
-  const payload = jwt.verify(token, JWT_SECRET);
+  const payload = verifyWithRotation(token);
   if (payload?.tokenType !== 'access') {
     throw new Error('invalid-token-type');
   }
@@ -100,7 +125,7 @@ const verifyAccessToken = async (token) => {
 };
 
 const verifyRefreshToken = async (token) => {
-  const payload = jwt.verify(token, JWT_SECRET);
+  const payload = verifyWithRotation(token);
   if (payload?.tokenType !== 'refresh') {
     throw new Error('invalid-token-type');
   }
@@ -148,7 +173,8 @@ module.exports = {
   revokeToken,
   revokeUserRefreshToken,
   redisClient,
-  JWT_SECRET,
+  JWT_ACTIVE_SECRET,
+  JWT_PREVIOUS_SECRETS,
   JWT_TTL_SECONDS,
   REFRESH_TTL_SECONDS,
 };
