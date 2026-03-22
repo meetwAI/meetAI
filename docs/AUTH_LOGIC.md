@@ -28,6 +28,20 @@ This document explains authentication in meetAI across gateway, auth-service, an
 10. If `/verify` fails (expired/invalid access token), gateway calls auth-service `POST /refresh` using the `meetai_refresh` cookie.
 11. If refresh succeeds, auth-service sets a new `meetai_access` cookie and gateway continues the original protected request.
 
+## Google OAuth Flow
+
+1. Frontend sends the user to `GET /auth/google` (gateway or auth-service).
+2. Auth-service redirects to Google for consent.
+3. Google redirects back to `GET /auth/google/callback`.
+4. Auth-service:
+   - verifies Google profile + email
+   - finds or creates a user record
+   - issues access + refresh tokens
+   - sets `meetai_access` and `meetai_refresh` cookies
+5. Auth-service redirects back to the frontend with `?oauth=success` or `?oauth=error`.
+6. Frontend should call `POST /verify` (or any protected API) to fetch the user profile and store `meetai_user` locally.
+7. Cookies must be set on the same host that the frontend uses for API calls (typically `http://localhost:4010` via gateway).
+
 ## Tokens and TTL
 
 Defined in `server/auth-service/services/tokenService.js`:
@@ -102,6 +116,16 @@ Auth-service routes (proxied by gateway):
   - Returns: `{ user }` on valid access token
   - Returns `401` for missing/expired/invalid access token
   - Does not perform refresh itself
+
+- `GET /auth/google`
+  - Redirects to Google OAuth consent screen
+  - Requires `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_CALLBACK_URL`
+  - Optional `GOOGLE_ALLOWED_DOMAIN` restricts login to a hosted domain
+
+- `GET /auth/google/callback`
+  - Handles Google OAuth callback
+  - Issues access + refresh cookies
+  - Redirects to `${FRONTEND_ORIGIN}/?oauth=success` or `?oauth=error`
 
 ## Gateway Enforcement
 

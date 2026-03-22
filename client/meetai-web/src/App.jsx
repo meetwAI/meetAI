@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import './App.css';
 import Dashboard from './components/Dashboard';
@@ -19,7 +20,10 @@ const getStoredUser = () => {
   }
 };
 
-const RequireAuth = ({ children }) => {
+const RequireAuth = ({ children, authReady }) => {
+  if (!authReady) {
+    return null;
+  }
   const user = getStoredUser();
   if (!user) {
     return <LandingPage />;
@@ -46,7 +50,47 @@ const ProfileSetupRoute = ({ children }) => {
 
 function App() {
   useSignals()
+  const [authReady, setAuthReady] = useState(false);
+  const [, setAuthTick] = useState(0);
   const user = getStoredUser();
+  const API_URL = import.meta.env.VITE_AUTH_URL || import.meta.env.VITE_API_URL;
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const bootstrapAuth = async () => {
+      if (getStoredUser()) {
+        if (isMounted) setAuthReady(true);
+        return;
+      }
+
+      try {
+        const response = await fetch(`${API_URL}/verify`, {
+          method: 'POST',
+          credentials: 'include',
+        });
+        if (!response.ok) {
+          return;
+        }
+        const payload = await response.json();
+        if (payload?.user) {
+          localStorage.setItem('meetai_user', JSON.stringify(payload.user));
+          if (isMounted) {
+            setAuthTick((tick) => tick + 1);
+          }
+        }
+      } catch (_error) {
+        // Ignore bootstrap failures; user can still log in manually.
+      } finally {
+        if (isMounted) setAuthReady(true);
+      }
+    };
+
+    bootstrapAuth();
+    return () => {
+      isMounted = false;
+    };
+  }, [API_URL]);
 
   return (
     <Router>
@@ -72,7 +116,7 @@ function App() {
         <Route
           path="/"
           element={
-            <RequireAuth>
+            <RequireAuth authReady={authReady}>
               <MainLayout />
             </RequireAuth>
           }
