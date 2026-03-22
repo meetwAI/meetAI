@@ -70,17 +70,23 @@ app.get('/health', (_req, res) => {
 const proxyAuth = (path, req, res) => {
   const targetUrl = new URL(path, AUTH_SERVICE_URL);
   const client = targetUrl.protocol === 'https:' ? https : http;
-  const body = JSON.stringify(req.body || {});
+  const hasBody = req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH';
+  const body = hasBody ? JSON.stringify(req.body || {}) : null;
+
+  const headers = {
+    Cookie: req.headers.cookie || '',
+  };
+
+  if (hasBody) {
+    headers['Content-Type'] = 'application/json';
+    headers['Content-Length'] = Buffer.byteLength(body);
+  }
 
   const proxyReq = client.request(
     targetUrl,
     {
       method: req.method,
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(body),
-        Cookie: req.headers.cookie || '',
-      },
+      headers,
     },
     (proxyRes) => {
       let data = '';
@@ -90,6 +96,9 @@ const proxyAuth = (path, req, res) => {
       proxyRes.on('end', () => {
         if (proxyRes.headers['set-cookie']) {
           res.set('set-cookie', proxyRes.headers['set-cookie']);
+        }
+        if (proxyRes.headers.location) {
+          res.set('location', proxyRes.headers.location);
         }
         res
           .status(proxyRes.statusCode || 200)
@@ -104,7 +113,9 @@ const proxyAuth = (path, req, res) => {
     res.status(502).json({ message: 'Auth service unavailable.' });
   });
 
-  proxyReq.write(body);
+  if (hasBody) {
+    proxyReq.write(body);
+  }
   proxyReq.end();
 };
 
@@ -290,6 +301,9 @@ app.post('/login', loginRateLimiter, (req, res) => proxyAuth('/login', req, res)
 app.post('/signup', loginRateLimiter, (req, res) => proxyAuth('/signup', req, res));
 app.post('/refresh', (req, res) => proxyAuth('/refresh', req, res));
 app.post('/logout', (req, res) => proxyAuth('/logout', req, res));
+app.post('/verify', (req, res) => proxyAuth('/verify', req, res));
+app.get('/auth/google', (req, res) => proxyAuth(req.originalUrl, req, res));
+app.get('/auth/google/callback', (req, res) => proxyAuth(req.originalUrl, req, res));
 
 app.use(verifyAccess); // verification required for all routes below
 

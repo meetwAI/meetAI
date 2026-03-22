@@ -23,7 +23,9 @@ const REFRESH_TTL = `${REFRESH_TTL_SECONDS}s`;
 
 const hashToken = (token) => crypto.createHash('sha256').update(token).digest('hex');
 const userRefreshIndexKey = (userId) => `auth:user_refresh:${userId}`;
+const userAccessIndexKey = (userId) => `auth:user_access:${userId}`;
 const accessTokenCacheKey = (token) => `auth:access:${hashToken(token)}`;
+const accessTokenCacheKeyByHash = (tokenHash) => `auth:access:${tokenHash}`;
 const refreshTokenCacheKeyByHash = (tokenHash) => `auth:refresh:${tokenHash}`;
 
 const redisClient = createClient({
@@ -74,9 +76,25 @@ const revokeUserRefreshToken = async (userId) => {
   await redisClient.del(indexKey);
 };
 
+const revokeUserAccessToken = async (userId) => {
+  if (!userId) {
+    return;
+  }
+
+  const indexKey = userAccessIndexKey(userId);
+  const previousAccessHash = await redisClient.get(indexKey);
+  if (!previousAccessHash) {
+    return;
+  }
+
+  await redisClient.del(accessTokenCacheKeyByHash(previousAccessHash));
+  await redisClient.del(indexKey);
+};
+
 const issueTokens = async (user) => {
   const userId = String(user.id);
   await revokeUserRefreshToken(userId);
+  await revokeUserAccessToken(userId);
 
   const accessToken = jwt.sign(
     { sub: user.id, username: user.username, name: user.name, tokenType: 'access' },
@@ -91,7 +109,9 @@ const issueTokens = async (user) => {
   );
 
   const refreshHash = hashToken(refreshToken);
+  const accessHash = hashToken(accessToken);
   await redisClient.set(accessTokenCacheKey(accessToken), userId, { EX: JWT_TTL_SECONDS });
+  await redisClient.set(userAccessIndexKey(userId), accessHash, { EX: JWT_TTL_SECONDS });
   await redisClient.set(refreshTokenCacheKeyByHash(refreshHash), userId, { EX: REFRESH_TTL_SECONDS });
   await redisClient.set(userRefreshIndexKey(userId), refreshHash, { EX: REFRESH_TTL_SECONDS });
   await logRedisSnapshot('issueTokens');
@@ -147,7 +167,17 @@ const revokeToken = async (token, tokenType) => {
   }
 
   if (tokenType === 'access') {
-    await redisClient.del(accessTokenCacheKey(token));
+    const tokenHash = hashToken(token);
+    const accessKey = accessTokenCacheKeyByHash(tokenHash);
+    const userId = await redisClient.get(accessKey);
+    await redisClient.del(accessKey);
+    if (userId) {
+      const indexKey = userAccessIndexKey(userId);
+      const activeAccessHash = await redisClient.get(indexKey);
+      if (activeAccessHash === tokenHash) {
+        await redisClient.del(indexKey);
+      }
+    }
     await logRedisSnapshot(`revokeToken:${tokenType}`);
     return;
   }
@@ -172,6 +202,7 @@ module.exports = {
   verifyRefreshToken,
   revokeToken,
   revokeUserRefreshToken,
+  revokeUserAccessToken,
   redisClient,
   JWT_ACTIVE_SECRET,
   JWT_PREVIOUS_SECRETS,

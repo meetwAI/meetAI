@@ -1,4 +1,7 @@
 const express = require('express');
+const crypto = require('crypto');
+const passport = require('passport');
+const { Strategy: GoogleStrategy } = require('passport-google-oauth20');
 const { query } = require('../../db/client');
 const {
   issueTokens,
@@ -57,10 +60,12 @@ const buildUser = (user) => ({
   id: user.id ?? user.sub,
   username: user.username,
   name: user.name,
+  avatarUrl: user.avatar_url,
 });
 
 const normalizeText = (value) => String(value || '').trim();
 const isDevelopment = process.env.NODE_ENV !== 'production';
+const FRONTEND_ORIGIN = normalizeText(process.env.FRONTEND_ORIGIN) || '';
 
 const devError = (error) => {
   if (!isDevelopment || !error) {
@@ -77,7 +82,7 @@ const devError = (error) => {
 
 const getUserByUsername = async (username) => {
   const result = await query(
-    `SELECT id, name, username, password
+    `SELECT id, name, username, password, email, google_id, avatar_url
      FROM users
      WHERE username = $1
      LIMIT 1`,
@@ -86,12 +91,189 @@ const getUserByUsername = async (username) => {
   return result.rows[0] || null;
 };
 
-const createUser = async ({ name, email, username, passwordHash }) => {
+const getUserByEmail = async (email) => {
   const result = await query(
-    `INSERT INTO users (name, email, username, password)
-     VALUES ($1, $2, $3, $4)
-     RETURNING id, name, username`,
-    [name, email, username, passwordHash],
+    `SELECT id, name, username, password, email, google_id, avatar_url
+     FROM users
+     WHERE email = $1
+     LIMIT 1`,
+    [email],
+  );
+  return result.rows[0] || null;
+};
+
+const getUserByGoogleId = async (googleId) => {
+  const result = await query(
+    `SELECT id, name, username, password, email, google_id, avatar_url
+     FROM users
+     WHERE google_id = $1
+     LIMIT 1`,
+    [googleId],
+  );
+  return result.rows[0] || null;
+};
+
+const sanitizeUsernameBase = (value) =>
+  normalizeText(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]/g, '')
+    .replace(/^[._-]+|[._-]+$/g, '');
+
+const generateUniqueUsername = async (email) => {
+  const localPart = String(email || '').split('@')[0] || 'user';
+  const baseCandidate = sanitizeUsernameBase(localPart);
+  const fallback = `user${crypto.randomBytes(3).toString('hex')}`;
+  const base = (baseCandidate && baseCandidate.length >= 3 ? baseCandidate : fallback).slice(0, 24);
+
+  if (!(await getUserByUsername(base))) {
+    return base;
+  }
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const suffix = crypto.randomBytes(2).toString('hex');
+    const candidate = `${base}-${suffix}`;
+    if (!(await getUserByUsername(candidate))) {
+      return candidate;
+    }
+  }
+
+  throw new Error('unable-to-generate-unique-username');
+};
+
+const resolveGoogleProfileEmail = (profile) => {
+  const emails = Array.isArray(profile?.emails) ? profile.emails : [];
+  const verified = emails.find((entry) => entry?.verified);
+  return normalizeText(verified?.value || emails[0]?.value).toLowerCase();
+};
+
+const resolveGoogleProfileName = (profile) => {
+  const displayName = normalizeText(profile?.displayName);
+  if (displayName) return displayName;
+  const givenName = normalizeText(profile?.name?.givenName);
+  const familyName = normalizeText(profile?.name?.familyName);
+  return normalizeText([givenName, familyName].filter(Boolean).join(' '));
+};
+
+const resolveGoogleProfileAvatar = (profile) => {
+  const photos = Array.isArray(profile?.photos) ? profile.photos : [];
+  return normalizeText(photos[0]?.value);
+};
+
+const isAllowedGoogleDomain = (email, profile) => {
+  const allowedDomain = normalizeText(process.env.GOOGLE_ALLOWED_DOMAIN).toLowerCase();
+  if (!allowedDomain) return true;
+  const emailDomain = String(email || '').split('@')[1]?.toLowerCase() || '';
+  const hostedDomain = normalizeText(profile?._json?.hd).toLowerCase();
+  return emailDomain === allowedDomain || hostedDomain === allowedDomain;
+};
+
+const findOrCreateGoogleUser = async (profile) => {
+  const googleId = normalizeText(profile?.id);
+  if (googleId) {
+    const existingByGoogle = await getUserByGoogleId(googleId);
+    if (existingByGoogle) {
+      return existingByGoogle;
+    }
+  }
+
+  const email = resolveGoogleProfileEmail(profile);
+  if (!email) {
+    throw new Error('google-email-missing');
+  }
+  if (!isAllowedGoogleDomain(email, profile)) {
+    const error = new Error('google-domain-not-allowed');
+    error.code = 'google-domain-not-allowed';
+    throw error;
+  }
+
+  const existing = await getUserByEmail(email);
+  if (existing) {
+    const name = resolveGoogleProfileName(profile);
+    const avatarUrl = resolveGoogleProfileAvatar(profile);
+    const updates = [];
+    const values = [];
+    if (googleId && !existing.google_id) {
+      updates.push(`google_id = $${values.length + 1}`);
+      values.push(googleId);
+    }
+    if (avatarUrl && existing.avatar_url !== avatarUrl) {
+      updates.push(`avatar_url = $${values.length + 1}`);
+      values.push(avatarUrl);
+    }
+    if (updates.length) {
+      values.push(existing.id);
+      await query(`UPDATE users SET ${updates.join(', ')} WHERE id = $${values.length}`, values);
+      return {
+        ...existing,
+        name: existing.name,
+        google_id: googleId || existing.google_id,
+        avatar_url: avatarUrl || existing.avatar_url,
+      };
+    }
+    return existing;
+  }
+
+  const name = resolveGoogleProfileName(profile);
+  const username = await generateUniqueUsername(email);
+  const avatarUrl = resolveGoogleProfileAvatar(profile);
+  const user = await createUser({ name, email, username, passwordHash: null, googleId, avatarUrl });
+  if (!user) {
+    throw new Error('google-user-create-failed');
+  }
+  return user;
+};
+
+const getGoogleConfig = () => {
+  const clientID = normalizeText(process.env.GOOGLE_CLIENT_ID);
+  const clientSecret = normalizeText(process.env.GOOGLE_CLIENT_SECRET);
+  const callbackURL = normalizeText(process.env.GOOGLE_CALLBACK_URL);
+  if (!clientID || !clientSecret || !callbackURL) {
+    return null;
+  }
+  return { clientID, clientSecret, callbackURL };
+};
+
+let googleStrategyReady = false;
+
+const ensureGoogleStrategy = () => {
+  if (googleStrategyReady) return true;
+  const config = getGoogleConfig();
+  if (!config) return false;
+
+  passport.use(
+    new GoogleStrategy(
+      {
+        clientID: config.clientID,
+        clientSecret: config.clientSecret,
+        callbackURL: config.callbackURL,
+      },
+      async (_accessToken, _refreshToken, profile, done) => {
+        try {
+          const user = await findOrCreateGoogleUser(profile);
+          return done(null, user);
+        } catch (error) {
+          return done(error);
+        }
+      },
+    ),
+  );
+
+  googleStrategyReady = true;
+  return true;
+};
+
+const ensureGoogleConfigured = (res) => {
+  if (ensureGoogleStrategy()) return true;
+  res.status(503).json({ message: 'Google auth is not configured.' });
+  return false;
+};
+
+const createUser = async ({ name, email, username, passwordHash, googleId, avatarUrl }) => {
+  const result = await query(
+    `INSERT INTO users (name, email, username, password, google_id, avatar_url)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     RETURNING id, name, username, google_id, avatar_url`,
+    [name, email, username, passwordHash, googleId || null, avatarUrl || null],
   );
   return result.rows[0] || null;
 };
@@ -291,6 +473,39 @@ router.post('/profile', async (req, res) => {
       error: devError(error),
     });
   }
+});
+
+// Google OAuth
+router.get('/auth/google', (req, res, next) => {
+  if (!ensureGoogleConfigured(res)) return undefined;
+  return passport.authenticate('google', {
+    scope: ['profile', 'email'],
+    session: false,
+    state: true,
+  })(req, res, next);
+});
+
+router.get('/auth/google/callback', (req, res, next) => {
+  if (!ensureGoogleConfigured(res)) return undefined;
+
+  return passport.authenticate('google', { session: false }, async (error, user) => {
+    if (error || !user) {
+      const reason = normalizeText(error?.code || error?.message) || 'oauth_failed';
+      const target = `${FRONTEND_ORIGIN}/?oauth=error&reason=${encodeURIComponent(reason)}`;
+      return res.redirect(target);
+    }
+
+    try {
+      const { accessToken, refreshToken } = await issueTokens(user);
+      setAccessCookie(res, accessToken);
+      setRefreshCookie(res, refreshToken);
+      const target = `${FRONTEND_ORIGIN}/`;
+      return res.redirect(target);
+    } catch (_tokenError) {
+      const target = `${FRONTEND_ORIGIN}/?oauth=error&reason=token_failed`;
+      return res.redirect(target);
+    }
+  })(req, res, next);
 });
 
 module.exports = router;
