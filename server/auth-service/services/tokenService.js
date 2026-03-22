@@ -1,17 +1,18 @@
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const { createClient } = require('redis');
+const { requireEnv, requireNumberEnv } = require('../../config/env');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'meetai_dev_secret';
-const JWT_TTL_SECONDS = Number(process.env.JWT_TTL_SECONDS || 20);
+const JWT_SECRET = requireEnv('JWT_SECRET');
+const JWT_TTL_SECONDS = requireNumberEnv('JWT_TTL_SECONDS');
 const JWT_TTL = `${JWT_TTL_SECONDS}s`;
-const REFRESH_TTL_SECONDS = Number(process.env.REFRESH_TTL_SECONDS || 60 * 60 * 24 * 10);
+const REFRESH_TTL_SECONDS = requireNumberEnv('REFRESH_TTL_SECONDS');
 const REFRESH_TTL = `${REFRESH_TTL_SECONDS}s`;
 
 const hashToken = (token) => crypto.createHash('sha256').update(token).digest('hex');
 
 const redisClient = createClient({
-  url: process.env.REDIS_URL || 'redis://localhost:6379',
+  url: requireEnv('REDIS_URL'),
 });
 
 redisClient.on('error', (error) => {

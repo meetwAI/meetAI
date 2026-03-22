@@ -9,7 +9,6 @@ const queryClient = new QueryClient({
   queryCache: new QueryCache({
     onError: (error) => {
       if (error?.status === 401) {
-        localStorage.removeItem('meetai_token');
         localStorage.removeItem('meetai_user');
         window.location.assign('/');
       }

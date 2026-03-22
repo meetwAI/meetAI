@@ -11,27 +11,34 @@ import ProfileSetup from './components/ProfileSetup';
 
 import LandingPage from './components/LandingPage';
 
+const getStoredUser = () => {
+  try {
+    return JSON.parse(localStorage.getItem('meetai_user') || 'null');
+  } catch {
+    return null;
+  }
+};
+
 const RequireAuth = ({ children }) => {
-  const token = localStorage.getItem('meetai_token');
-  if (!token) {
+  const user = getStoredUser();
+  if (!user) {
     return <LandingPage />;
   }
   return children;
 };
 
 const AuthRoute = ({ children }) => {
-  const token = localStorage.getItem('meetai_token');
-  if (token) {
+  const user = getStoredUser();
+  if (user) {
     return <Navigate to="/" replace />;
   }
   return children;
 };
 
-// Profile setup is only reachable with a token (right after signup).
-// If no token, redirect to signup.
+// Profile setup is only reachable with a signed-in user.
 const ProfileSetupRoute = ({ children }) => {
-  const token = localStorage.getItem('meetai_token');
-  if (!token) {
+  const user = getStoredUser();
+  if (!user) {
     return <Navigate to="/signup" replace />;
   }
   return children;
@@ -39,6 +46,8 @@ const ProfileSetupRoute = ({ children }) => {
 
 function App() {
   useSignals()
+  const user = getStoredUser();
+
   return (
     <Router>
       <Routes>
@@ -73,6 +82,11 @@ function App() {
           <Route path="meetings/:meetingid" element={<PreviousMeetings />} />
           <Route path="profile" element={<Profile />} />
         </Route>
+
+        <Route
+          path="*"
+          element={user ? <Navigate to="/" replace /> : <LandingPage />}
+        />
       </Routes>
     </Router>
   );

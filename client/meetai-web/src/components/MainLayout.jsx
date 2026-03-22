@@ -5,7 +5,7 @@ import './MainLayout.css';
 import { getSocket, connectSocket } from '../api/socketClient';
 import { fetchWithAuth } from '../api/fetchWithAuth';
 import {Plus} from 'lucide-react'
-const MainLayout = ({ username = 'John Doe', userImage = 'https://via.placeholder.com/80' }) => {
+const MainLayout = () => {
     const navigate = useNavigate();
     const queryClient = useQueryClient();
     const [captureState, setCaptureState] = React.useState('idle');
@@ -54,7 +54,7 @@ const MainLayout = ({ username = 'John Doe', userImage = 'https://via.placeholde
                 socketRef.current.off('connect');
                 socketRef.current.off('connect_error');
                 socketRef.current.off('meeting-audio-processed');
-            } catch (e) {
+            } catch {
                 // ignore
             }
             socketRef.current = null;
@@ -85,13 +85,6 @@ const MainLayout = ({ username = 'John Doe', userImage = 'https://via.placeholde
         setCaptureError('');
         setServerMessage('');
         setCaptureState('requesting');
-
-        const token = localStorage.getItem('meetai_token');
-        if (!token) {
-            setCaptureState('idle');
-            setCaptureError('Please sign in before recording.');
-            return;
-        }
 
         if (!window.isSecureContext) {
             setCaptureState('idle');
@@ -144,8 +137,8 @@ const MainLayout = ({ username = 'John Doe', userImage = 'https://via.placeholde
             audioStreamRef.current = audioStream;
 
             let socket = getSocket();
-            if (!socket && token) {
-                socket = connectSocket(token);
+            if (!socket) {
+                socket = connectSocket();
             }
             if (!socket) {
                 setCaptureState('idle');

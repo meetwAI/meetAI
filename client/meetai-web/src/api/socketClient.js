@@ -6,18 +6,17 @@ export function getSocket() {
   return socket;
 }
 
-export function connectSocket(token, url = 'http://localhost:4010') {
+export function connectSocket(url = 'http://localhost:4010') {
   if (socket) {
     try {
-      if (token && (!socket.auth || socket.auth.token !== token)) {
-        socket.auth = { token };
-      }
       if (!socket.connected) socket.connect();
-    } catch (e) {
+    } catch {
       // fall through to recreate socket
       try {
         socket.disconnect?.();
-      } catch (_) {}
+      } catch {
+        // ignore cleanup errors
+      }
       socket = null;
     }
   }
@@ -25,7 +24,7 @@ export function connectSocket(token, url = 'http://localhost:4010') {
   if (!socket) {
     socket = io(url, {
       transports: ['websocket'],
-      auth: { token },
+      withCredentials: true,
     });
   }
 
@@ -36,7 +35,7 @@ export function disconnectSocket() {
   if (!socket) return;
   try {
     socket.disconnect();
-  } catch (e) {
+  } catch {
     // ignore
   }
   socket = null;
