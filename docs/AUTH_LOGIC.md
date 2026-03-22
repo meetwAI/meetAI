@@ -33,10 +33,11 @@ This document explains authentication in meetAI across gateway, auth-service, an
 Defined in `server/auth-service/services/tokenService.js`:
 
 - JWT signing key envs:
-  - `JWT_ACTIVE_SECRET`: current signing key (required, strong random, 32+ chars)
-  - `JWT_PREVIOUS_SECRETS`: comma-separated older keys accepted only for verify during rotation window
-- Access token TTL: `JWT_TTL_SECONDS` (currently `600` seconds = 10 minutes)
-- Refresh token TTL: `REFRESH_TTL_SECONDS` (default `10` days)
+  - `JWT_ACTIVE_SECRET` (required; current signing key)
+  - `JWT_PREVIOUS_SECRETS` (optional; comma-separated older keys accepted for verify during rotation)
+  - `JWT_SECRET` (legacy fallback if `JWT_ACTIVE_SECRET` is not set)
+- Access token TTL: `JWT_TTL_SECONDS` (required; set in `docker-compose.yml` to `900` seconds = 15 minutes)
+- Refresh token TTL: `REFRESH_TTL_SECONDS` (required; set in `docker-compose.yml` to `864000` seconds = 10 days)
 - Token hashes and refresh index are stored in Redis:
   - `auth:access:<sha256(token)>`
   - `auth:refresh:<sha256(token)>`
@@ -50,13 +51,9 @@ Refresh-token policy:
 
 JWT key rotation policy:
 
-- New tokens are always signed with `JWT_ACTIVE_SECRET`.
-- Verification accepts both `JWT_ACTIVE_SECRET` and `JWT_PREVIOUS_SECRETS`.
-- To rotate safely:
-  1. Generate a new strong `JWT_ACTIVE_SECRET`.
-  2. Move the old active key into `JWT_PREVIOUS_SECRETS`.
-  3. Wait at least `REFRESH_TTL_SECONDS` so old refresh tokens expire.
-  4. Remove the old key from `JWT_PREVIOUS_SECRETS`.
+- New tokens are signed with `JWT_ACTIVE_SECRET`.
+- Verification accepts `JWT_ACTIVE_SECRET` and any keys in `JWT_PREVIOUS_SECRETS`.
+- Legacy `JWT_SECRET` is accepted only when `JWT_ACTIVE_SECRET` is not provided.
 
 Token payload includes:
 

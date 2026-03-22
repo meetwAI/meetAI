@@ -16,15 +16,11 @@ services:
       context: ./server
       dockerfile: Dockerfile
     command: node auth-service/index.js
+    env_file:
+      - ./server/.env
     environment:
-      AUTH_PORT: 4020
-      FRONTEND_ORIGIN: http://localhost:5173
       REDIS_URL: redis://redis:6379
       DATABASE_URL: postgresql://meetai:meetai_pass@postgres:5432/meetai_dev
-      JWT_SECRET: meetai_dev_secret
-      JWT_TTL_SECONDS: 20
-      REFRESH_TTL_SECONDS: 864000
-      NODE_ENV: development
     ports:
       - "4020:4020"
     depends_on:
@@ -60,10 +56,10 @@ services:
       context: ./server
       dockerfile: Dockerfile
     command: node meeting-service/index.js
+    env_file:
+      - ./server/.env
     environment:
-      PORT: 4001
       DATABASE_URL: postgresql://meetai:meetai_pass@postgres:5432/meetai_dev
-      NODE_ENV: development
     ports:
       - "4001:4001"
     healthcheck:
@@ -97,13 +93,12 @@ services:
       context: ./server
       dockerfile: Dockerfile
     command: node gateway/app.js
+    env_file:
+      - ./server/.env
     environment:
-      GATEWAY_PORT: 4010
-      FRONTEND_ORIGIN: http://localhost:5173
       AUTH_SERVICE_URL: http://auth-service:4020
       MEETING_SERVICE_URL: http://meeting-service:4001
       REDIS_URL: redis://redis:6379
-      NODE_ENV: development
     ports:
       - "4010:4010"
     depends_on:
