@@ -5,6 +5,7 @@ const {
   verifyRefreshToken,
   verifyAccessToken,
   revokeToken,
+  JWT_TTL_SECONDS,
   REFRESH_TTL_SECONDS,
 } = require('../services/tokenService');
 const { hashPassword, verifyPassword, isPasswordHash } = require('../services/passwordService');
@@ -14,17 +15,37 @@ const router = express.Router();
 const setRefreshCookie = (res, refreshToken) => {
   res.cookie('meetai_refresh', refreshToken, {
     httpOnly: true,
-    sameSite: 'lax',
+    sameSite: 'strict',
     secure: process.env.NODE_ENV === 'production',
     path: '/',
     maxAge: REFRESH_TTL_SECONDS * 1000,
   });
 };
 
+const setAccessCookie = (res, accessToken) => {
+  res.cookie('meetai_access', accessToken, {
+    httpOnly: true,
+    sameSite: 'strict',
+    secure: process.env.NODE_ENV === 'production',
+    path: '/',
+    maxAge: JWT_TTL_SECONDS * 1000,
+  });
+};
+
 const clearRefreshCookie = (res) => {
   res.cookie('meetai_refresh', '', {
     httpOnly: true,
-    sameSite: 'lax',
+    sameSite: 'strict',
+    secure: process.env.NODE_ENV === 'production',
+    path: '/',
+    maxAge: 0,
+  });
+};
+
+const clearAccessCookie = (res) => {
+  res.cookie('meetai_access', '', {
+    httpOnly: true,
+    sameSite: 'strict',
     secure: process.env.NODE_ENV === 'production',
     path: '/',
     maxAge: 0,
@@ -100,8 +121,9 @@ router.post('/signup', async (req, res) => {
     }
 
     const { accessToken, refreshToken } = await issueTokens(user);
+    setAccessCookie(res, accessToken);
     setRefreshCookie(res, refreshToken);
-    return res.status(201).json({ token: accessToken, user: buildUser(user) });
+    return res.status(201).json({ user: buildUser(user) });
   } catch (error) {
     if (error?.code === '23505') {
       return res.status(409).json({ message: 'Username or email already exists.' });
@@ -141,8 +163,9 @@ router.post('/login', async (req, res) => {
     }
 
     const { accessToken, refreshToken } = await issueTokens(user);
+    setAccessCookie(res, accessToken);
     setRefreshCookie(res, refreshToken);
-    return res.json({ token: accessToken, user: buildUser(user) });
+    return res.json({ user: buildUser(user) });
   } catch (error) {
     console.error('[auth-service] login failed', error);
     return res.status(500).json({
@@ -169,9 +192,9 @@ router.post('/refresh', (req, res) => {
       ),
     )
     .then(({ payload, accessToken, newRefreshToken }) => {
+      setAccessCookie(res, accessToken);
       setRefreshCookie(res, newRefreshToken);
       return res.json({
-        token: accessToken,
         user: buildUser({ id: payload.sub, username: payload.username, name: payload.name }),
       });
     })
@@ -180,7 +203,8 @@ router.post('/refresh', (req, res) => {
 
 router.post('/verify', (req, res) => {
   const authHeader = req.headers.authorization || '';
-  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+  const tokenFromHeader = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+  const token = tokenFromHeader || req.cookies?.meetai_access || '';
   if (!token) {
     return res.status(401).json({ message: 'Unauthorized' });
   }
@@ -192,7 +216,8 @@ router.post('/verify', (req, res) => {
 
 router.post('/logout', async (req, res) => {
   const authHeader = req.headers.authorization || '';
-  const accessToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+  const accessToken =
+    (authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '') || req.cookies?.meetai_access || '';
   const refreshToken = req.cookies?.meetai_refresh;
 
   try {
@@ -204,6 +229,7 @@ router.post('/logout', async (req, res) => {
     // Do not leak revocation internals; always clear cookie and return success.
   }
 
+  clearAccessCookie(res);
   clearRefreshCookie(res);
   return res.json({ success: true });
 });

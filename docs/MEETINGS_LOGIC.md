@@ -89,8 +89,9 @@ All are exposed on gateway (`http://localhost:4010`) and proxied to meeting-serv
 
 - Gateway verifies access token for meeting routes and injects `x-user-id`.
 - Meeting creation requires valid `x-user-id`.
+- Read endpoints (`/meetings/dummy`, `/meetings/recent`, `/meetings/:id`) are owner-scoped by `user_id`.
+- Message append and completion (`/meetings/:id/messages`, `/meetings/:id/complete`) are owner-scoped by `user_id`.
 - Rename and delete are strict owner-only operations.
-- Some read endpoints (`/meetings/recent`, `/meetings/:id`) currently do not filter by `user_id` at query level.
 
 ## Frontend Cache Behavior
 

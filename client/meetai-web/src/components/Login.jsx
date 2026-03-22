@@ -29,9 +29,8 @@ export default function Login() {
         throw new Error(payload?.message || 'Login failed');
       }
       const payload = await response.json();
-      localStorage.setItem('meetai_token', payload.token);
       localStorage.setItem('meetai_user', JSON.stringify(payload.user));
-      try { connectSocket(payload.token); } catch (e) { console.error('socket connect failed', e); }
+      try { connectSocket(); } catch (e) { console.error('socket connect failed', e); }
       navigate('/', { replace: true });
     } catch (err) {
       setError(err?.message || 'Unable to login');

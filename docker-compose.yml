@@ -43,6 +43,16 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./server
+          target: /app
+          ignore:
+            - node_modules/
+            - db/postgres/
+        - action: rebuild
+          path: ./server/package.json
     restart: unless-stopped
 
   meeting-service:
@@ -67,6 +77,16 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./server
+          target: /app
+          ignore:
+            - node_modules/
+            - db/postgres/
+        - action: rebuild
+          path: ./server/package.json
     depends_on:
       postgres:
         condition: service_healthy
@@ -104,6 +124,16 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+    develop:
+      watch:
+        - action: sync+restart
+          path: ./server
+          target: /app
+          ignore:
+            - node_modules/
+            - db/postgres/
+        - action: rebuild
+          path: ./server/package.json
     restart: unless-stopped
 
   web:
@@ -117,6 +147,16 @@ services:
       VITE_AUTH_URL: http://localhost:4010
     ports:
       - "5173:5173"
+    develop:
+      watch:
+        - action: sync
+          path: ./client/meetai-web/src
+          target: /app/src
+        - action: sync
+          path: ./client/meetai-web/public
+          target: /app/public
+        - action: rebuild
+          path: ./client/meetai-web/package.json
     depends_on:
       gateway:
         condition: service_healthy

@@ -1,6 +1,7 @@
 const { Pool } = require('pg');
+const { requireEnv } = require('../config/env');
 
-const connectionString = process.env.DATABASE_URL || 'postgresql://meetai:meetai_pass@localhost:5432/meetai_dev';
+const connectionString = requireEnv('DATABASE_URL');
 
 const pool = new Pool({
   connectionString,

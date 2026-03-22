@@ -24,24 +24,20 @@ export default function Profile() {
   const [saving, setSaving] = useState(false);
 
   const handleLogout = async () => {
-    const token = localStorage.getItem('meetai_token');
-
     try {
       await fetch(`${API_URL}/logout`, {
         method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
         credentials: 'include',
       });
-    } catch (_error) {
+    } catch {
       // Proceed with local logout even if backend is unavailable.
     }
 
     try {
       disconnectSocket();
-    } catch (e) {
+    } catch {
       // ignore
     }
-    localStorage.removeItem('meetai_token');
     localStorage.removeItem('meetai_user');
     navigate('/login', { replace: true });
   };
@@ -92,7 +88,7 @@ export default function Profile() {
           if (payload?.message) {
             message = payload.message;
           }
-        } catch (_error) {
+        } catch {
           // Keep fallback message.
         }
       }

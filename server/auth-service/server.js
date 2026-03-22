@@ -1,10 +1,11 @@
 const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
+const { requireEnv, requireNumberEnv } = require('../config/env');
 const authRoutes = require('./routes/auth');
 
-const PORT = process.env.AUTH_PORT || 4020;
-const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:5173';
+const PORT = requireNumberEnv('AUTH_PORT');
+const FRONTEND_ORIGIN = requireEnv('FRONTEND_ORIGIN');
 
 const app = express();
 app.use(
@@ -12,7 +13,6 @@ app.use(
     origin: [FRONTEND_ORIGIN],
     credentials: true,
     methods: ['GET', 'POST'],
-    exposedHeaders: ['x-access-token'],
   }),
 );
 app.use(cookieParser());
