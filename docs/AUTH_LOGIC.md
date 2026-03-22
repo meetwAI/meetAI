@@ -32,11 +32,31 @@ This document explains authentication in meetAI across gateway, auth-service, an
 
 Defined in `server/auth-service/services/tokenService.js`:
 
-- Access token TTL: `JWT_TTL_SECONDS` (default `20` seconds)
+- JWT signing key envs:
+  - `JWT_ACTIVE_SECRET`: current signing key (required, strong random, 32+ chars)
+  - `JWT_PREVIOUS_SECRETS`: comma-separated older keys accepted only for verify during rotation window
+- Access token TTL: `JWT_TTL_SECONDS` (currently `600` seconds = 10 minutes)
 - Refresh token TTL: `REFRESH_TTL_SECONDS` (default `10` days)
-- Both token hashes are stored in Redis:
+- Token hashes and refresh index are stored in Redis:
   - `auth:access:<sha256(token)>`
   - `auth:refresh:<sha256(token)>`
+  - `auth:user_refresh:<userId>` (points to active refresh token hash)
+
+Refresh-token policy:
+
+- Only one active refresh token is allowed per user.
+- When new tokens are issued (login/signup/refresh), any previous refresh token for that user is deleted from Redis before storing the new one.
+- Refresh verification checks both token presence and active-refresh index match.
+
+JWT key rotation policy:
+
+- New tokens are always signed with `JWT_ACTIVE_SECRET`.
+- Verification accepts both `JWT_ACTIVE_SECRET` and `JWT_PREVIOUS_SECRETS`.
+- To rotate safely:
+  1. Generate a new strong `JWT_ACTIVE_SECRET`.
+  2. Move the old active key into `JWT_PREVIOUS_SECRETS`.
+  3. Wait at least `REFRESH_TTL_SECONDS` so old refresh tokens expire.
+  4. Remove the old key from `JWT_PREVIOUS_SECRETS`.
 
 Token payload includes:
 
@@ -67,11 +87,15 @@ Auth-service routes (proxied by gateway):
 - `POST /refresh`
   - Uses `meetai_refresh` cookie
   - Returns: `{ user }`
+  - Revokes the used refresh token in Redis
+  - Invalidates any previously active refresh token for that user
   - Rotates both access and refresh cookies
 
 - `POST /logout`
   - Uses `Authorization: Bearer <accessToken>` (optional), `meetai_access` cookie, and `meetai_refresh` cookie
-  - Revokes both access and refresh tokens in Redis so they cannot be used again
+  - Revokes access token in Redis
+  - Revokes the provided refresh token in Redis
+  - Clears user-level active refresh-token index in Redis (if available)
   - Clears the `meetai_access` cookie
   - Clears the `meetai_refresh` cookie
   - Returns: `{ success: true }`

@@ -5,6 +5,7 @@ const {
   verifyRefreshToken,
   verifyAccessToken,
   revokeToken,
+  revokeUserRefreshToken,
   JWT_TTL_SECONDS,
   REFRESH_TTL_SECONDS,
 } = require('../services/tokenService');
@@ -175,30 +176,36 @@ router.post('/login', async (req, res) => {
   }
 });
 
-router.post('/refresh', (req, res) => {
+router.post('/refresh', async (req, res) => {
   const refreshToken = req.cookies?.meetai_refresh;
+  const previousAccessToken = req.cookies?.meetai_access || '';
   if (!refreshToken) {
     return res.status(401).json({ message: 'Unauthorized' });
   }
 
-  return verifyRefreshToken(refreshToken)
-    .then((payload) =>
-      issueTokens({ id: payload.sub, username: payload.username, name: payload.name }).then(
-        ({ accessToken, refreshToken: newRefreshToken }) => ({
-          payload,
-          accessToken,
-          newRefreshToken,
-        }),
-      ),
-    )
-    .then(({ payload, accessToken, newRefreshToken }) => {
-      setAccessCookie(res, accessToken);
-      setRefreshCookie(res, newRefreshToken);
-      return res.json({
-        user: buildUser({ id: payload.sub, username: payload.username, name: payload.name }),
-      });
-    })
-    .catch(() => res.status(401).json({ message: 'Unauthorized' }));
+  try {
+    const payload = await verifyRefreshToken(refreshToken);
+
+    // Rotate refresh tokens: once used, the current refresh token becomes invalid.
+    await revokeToken(refreshToken, 'refresh');
+    if (previousAccessToken) {
+      await revokeToken(previousAccessToken, 'access');
+    }
+
+    const { accessToken, refreshToken: newRefreshToken } = await issueTokens({
+      id: payload.sub,
+      username: payload.username,
+      name: payload.name,
+    });
+
+    setAccessCookie(res, accessToken);
+    setRefreshCookie(res, newRefreshToken);
+    return res.json({
+      user: buildUser({ id: payload.sub, username: payload.username, name: payload.name }),
+    });
+  } catch (_error) {
+    return res.status(401).json({ message: 'Unauthorized' });
+  }
 });
 
 router.post('/verify', (req, res) => {
@@ -219,11 +226,21 @@ router.post('/logout', async (req, res) => {
   const accessToken =
     (authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '') || req.cookies?.meetai_access || '';
   const refreshToken = req.cookies?.meetai_refresh;
+  let accessPayload = null;
+
+  if (accessToken) {
+    try {
+      accessPayload = await verifyAccessToken(accessToken);
+    } catch (_error) {
+      accessPayload = null;
+    }
+  }
 
   try {
     await Promise.all([
       revokeToken(accessToken, 'access'),
       revokeToken(refreshToken, 'refresh'),
+      revokeUserRefreshToken(accessPayload?.sub),
     ]);
   } catch (_error) {
     // Do not leak revocation internals; always clear cookie and return success.
