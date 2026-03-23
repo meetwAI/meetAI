@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Container, Row, Col, Form, Button } from 'react-bootstrap';
 import '../styles/Login.css';
@@ -12,6 +12,59 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [oauthLoading, setOauthLoading] = useState(false);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const oauthStatus = params.get('oauth');
+    if (oauthStatus !== 'success') {
+      if (oauthStatus === 'error') {
+        setError('Google sign-in failed. Please try again.');
+      }
+      return;
+    }
+
+    const finalizeOauth = async () => {
+      setOauthLoading(true);
+      setError('');
+      try {
+        const response = await fetch(`${API_URL}/verify`, {
+          method: 'POST',
+          credentials: 'include',
+        });
+        if (!response.ok) {
+          throw new Error('Unable to verify session.');
+        }
+        const payload = await response.json();
+        if (!payload?.user) {
+          throw new Error('Missing user profile.');
+        }
+        localStorage.setItem('meetai_user', JSON.stringify(payload.user));
+        try { connectSocket(); } catch (e) { console.error('socket connect failed', e); }
+        navigate('/', { replace: true });
+      } catch (err) {
+        setError(err?.message || 'Unable to complete Google sign-in.');
+      } finally {
+        setOauthLoading(false);
+      }
+    };
+
+    finalizeOauth();
+  }, [API_URL, navigate]);
+
+  const handleGoogleSignIn = () => {
+    setError('');
+    window.location.href = `${API_URL}/auth/google`;
+  };
+
+  const GoogleIcon = () => (
+    <svg width="20" height="20" viewBox="0 0 48 48" aria-hidden="true">
+      <path fill="#EA4335" d="M24 9.5c3.54 0 6.74 1.22 9.26 3.62l6.92-6.92C35.98 2.28 30.45 0 24 0 14.64 0 6.55 5.38 2.52 13.22l8.1 6.29C12.84 13.09 17.98 9.5 24 9.5z" />
+      <path fill="#4285F4" d="M46.5 24.55c0-1.64-.15-3.22-.44-4.74H24v9h12.7c-.55 2.97-2.2 5.49-4.7 7.2l7.2 5.58c4.2-3.88 7.3-9.61 7.3-17.04z" />
+      <path fill="#FBBC05" d="M10.62 28.51c-.5-1.49-.78-3.08-.78-4.71 0-1.63.28-3.22.78-4.71l-8.1-6.29C.9 15.87 0 19.14 0 23.8c0 4.66.9 7.93 2.52 11l8.1-6.29z" />
+      <path fill="#34A853" d="M24 47.6c6.48 0 11.92-2.14 15.89-5.81l-7.2-5.58c-2.01 1.35-4.59 2.14-8.69 2.14-6.02 0-11.16-3.59-13.38-8.71l-8.1 6.29C6.55 42.22 14.64 47.6 24 47.6z" />
+    </svg>
+  );
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -29,9 +82,8 @@ export default function Login() {
         throw new Error(payload?.message || 'Login failed');
       }
       const payload = await response.json();
-      localStorage.setItem('meetai_token', payload.token);
       localStorage.setItem('meetai_user', JSON.stringify(payload.user));
-      try { connectSocket(payload.token); } catch (e) { console.error('socket connect failed', e); }
+      try { connectSocket(); } catch (e) { console.error('socket connect failed', e); }
       navigate('/', { replace: true });
     } catch (err) {
       setError(err?.message || 'Unable to login');
@@ -161,7 +213,7 @@ export default function Login() {
 
                 {error && <div className="alert alert-danger py-2 small fw-medium">{error}</div>}
 
-                <Button variant="primary" type="submit" className="w-100 py-3 fw-bold shadow-sm d-flex align-items-center justify-content-center gap-2" disabled={loading}>
+                <Button variant="primary" type="submit" className="w-100 py-3 fw-bold shadow-sm d-flex align-items-center justify-content-center gap-2" disabled={loading || oauthLoading}>
                   {loading ? 'Authenticating...' : (
                     <>
                       <span>Sign In</span>
@@ -170,6 +222,27 @@ export default function Login() {
                   )}
                 </Button>
               </Form>
+
+              <div className="d-flex align-items-center gap-3 my-4">
+                <div className="flex-grow-1 border-top border-secondary border-opacity-50" />
+                <span className="text-secondary small">or</span>
+                <div className="flex-grow-1 border-top border-secondary border-opacity-50" />
+              </div>
+
+              <Button
+                variant="outline-light"
+                type="button"
+                className="w-100 py-3 fw-bold d-flex align-items-center justify-content-center gap-2"
+                onClick={handleGoogleSignIn}
+                disabled={loading || oauthLoading}
+              >
+                {oauthLoading ? 'Connecting to Google...' : (
+                  <>
+                    <GoogleIcon />
+                    <span>Continue with Google</span>
+                  </>
+                )}
+              </Button>
 
               <div className="mt-4 pt-4 border-top border-secondary border-opacity-50 text-center">
                 <p className="text-secondary small mb-0">

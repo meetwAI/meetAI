@@ -1,251 +1,334 @@
+/* ==========================================
+   Landing Page — Blue Glass Aesthetic
+   Matches Login.css theme: #101922 bg, #258cf4 accent
+   ========================================== */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&display=swap');
+
+/* ---------- Base ---------- */
 .landing-container {
   min-height: 100vh;
-  background-color: #efece5; /* Warm beige */
-  color: #1a1a1a;
-  font-family: 'Inter', 'Outfit', sans-serif;
-  padding: 20px 40px;
+  background-color: #101922;
+  color: #e2e8f0;
+  font-family: 'Inter', sans-serif;
   overflow-x: hidden;
+  position: relative;
 }
 
+/* ---------- Animated Wave Background ---------- */
+.landing-container::before {
+  content: '';
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  width: 200%;
+  height: 45%;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1440 320' preserveAspectRatio='none'%3E%3Cpath fill='%23258cf4' fill-opacity='0.07' d='M0,224L48,213.3C96,203,192,181,288,181.3C384,181,480,203,576,224C672,245,768,267,864,250.7C960,235,1056,181,1152,165.3C1248,149,1344,171,1392,181.3L1440,192L1440,320L0,320Z'/%3E%3C/svg%3E") bottom/cover no-repeat;
+  pointer-events: none;
+  animation: wave-bg 20s linear infinite;
+  z-index: 0;
+}
+
+@keyframes wave-bg {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
+/* ---------- Layout Wrapper ---------- */
+.landing-inner {
+  position: relative;
+  z-index: 1;
+  padding: 0 48px;
+}
+
+/* ---------- Header ---------- */
 .landing-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 10px 0;
-  margin-bottom: 60px;
-  border-bottom: 1px solid rgba(0,0,0,0.05);
+  padding: 24px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  margin-bottom: 72px;
 }
 
 .logo {
   font-size: 1.5rem;
-  font-weight: 700;
-  color: #273e27; /* Dark olive green */
+  font-weight: 900;
+  color: #ffffff;
+  letter-spacing: -0.03em;
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
+.logo span {
+  color: #258cf4;
+}
+
 .nav-links {
   display: flex;
-  gap: 32px;
+  gap: 36px;
 }
 
 .nav-links a {
   text-decoration: none;
-  color: #4a4a4a;
+  color: #94a3b8;
   font-weight: 500;
   font-size: 0.95rem;
   transition: color 0.2s ease;
 }
 
 .nav-links a:hover {
-  color: #273e27;
+  color: #ffffff;
 }
 
 .auth-buttons {
   display: flex;
-  gap: 16px;
+  gap: 12px;
   align-items: center;
 }
 
 .btn-signin {
   text-decoration: none;
-  color: #1a1a1a;
+  color: #94a3b8;
   font-weight: 600;
-  background: transparent;
-  padding: 8px 16px;
+  font-size: 0.9rem;
+  padding: 8px 18px;
   border-radius: 20px;
-  transition: background 0.2s;
+  transition: color 0.2s, background 0.2s;
 }
 
 .btn-signin:hover {
-  background: rgba(0,0,0,0.05);
+  color: #fff;
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .btn-signup {
   text-decoration: none;
-  background-color: #273e27; /* Dark olive green */
+  background: #258cf4;
   color: #ffffff;
   padding: 10px 24px;
   border-radius: 24px;
-  font-weight: 600;
-  transition: opacity 0.2s, transform 0.2s;
+  font-weight: 700;
+  font-size: 0.9rem;
+  transition: background 0.2s, transform 0.2s, box-shadow 0.2s;
+  box-shadow: 0 4px 16px rgba(37, 140, 244, 0.35);
 }
 
 .btn-signup:hover {
-  opacity: 0.9;
+  background: #1d70c4;
   transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(37, 140, 244, 0.45);
 }
 
-/* Hero Section */
+/* ---------- Hero ---------- */
 .hero-section {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 40px;
-  margin-bottom: 40px;
+  margin-bottom: 48px;
+  align-items: center;
 }
 
 .hero-title {
   font-size: 4rem;
-  line-height: 1.1;
-  font-weight: 700;
-  color: #1a1a1a;
+  line-height: 1.05;
+  font-weight: 900;
+  color: #ffffff;
   text-transform: uppercase;
+  letter-spacing: -0.04em;
   margin: 0;
+}
+
+.hero-title .accent {
+  color: #258cf4;
 }
 
 .hero-text {
   align-self: flex-end;
-  max-width: 400px;
+  max-width: 420px;
   font-size: 1.1rem;
-  color: #4a4a4a;
-  line-height: 1.6;
+  color: #94a3b8;
+  line-height: 1.7;
 }
 
+/* ---------- Hero Image ---------- */
 .hero-image {
   width: 100%;
   height: 400px;
   object-fit: cover;
   border-radius: 24px;
   margin-bottom: 80px;
-  box-shadow: 0 10px 30px rgba(0,0,0,0.05);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.06);
 }
 
-/* Features grid */
+/* ---------- Features Section ---------- */
 .features-section {
-  margin-bottom: 80px;
+  margin-bottom: 96px;
+}
+
+.section-label {
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 3px;
+  color: #258cf4;
+  font-weight: 600;
+  margin-bottom: 8px;
 }
 
 .section-title {
-  font-size: 2rem;
-  font-weight: 600;
+  font-size: 2.2rem;
+  font-weight: 800;
+  color: #ffffff;
+  letter-spacing: -0.03em;
+  margin: 0 0 24px 0;
+  line-height: 1.2;
+}
+
+.section-body {
+  color: #94a3b8;
+  font-size: 1.05rem;
+  line-height: 1.7;
   margin-bottom: 40px;
-  color: #1a1a1a;
 }
 
 .features-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 40px;
+  gap: 48px;
   align-items: center;
-}
-
-.feature-cards {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 20px;
-}
-
-.feature-card {
-  background: #fff;
-  padding: 24px;
-  border-radius: 20px;
-  box-shadow: 0 4px 15px rgba(0,0,0,0.03);
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.feature-card.dark {
-  background: #273e27;
-  color: white;
-}
-
-.feature-card.dark .feature-title {
-  color: white;
-}
-
-.feature-card.dark .feature-desc {
-  color: #e0e0e0;
-}
-
-.feature-icon {
-  font-size: 24px;
-  color: #273e27;
-}
-
-.feature-card.dark .feature-icon {
-  color: #efece5;
-}
-
-.feature-title {
-  font-weight: 600;
-  font-size: 1.1rem;
-  color: #1a1a1a;
-  margin: 0;
-}
-
-.feature-desc {
-  font-size: 0.9rem;
-  color: #666;
-  line-height: 1.5;
-  margin: 0;
 }
 
 .feature-images {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 20px;
+  gap: 16px;
 }
 
 .feature-img-box {
-  border-radius: 24px;
+  border-radius: 20px;
   overflow: hidden;
-  height: 350px;
-  background: #e0dcd3;
+  height: 320px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
 }
 
 .feature-img-box img {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  transition: transform 0.4s ease;
 }
 
-/* Services section */
+.feature-img-box:hover img {
+  transform: scale(1.04);
+}
+
+/* Feature Cards */
+.feature-cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 8px;
+}
+
+.feature-card {
+  background: rgba(24, 38, 52, 0.7);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 24px;
+  border-radius: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: border-color 0.2s, transform 0.2s;
+}
+
+.feature-card:hover {
+  border-color: rgba(37, 140, 244, 0.4);
+  transform: translateY(-3px);
+}
+
+.feature-card.dark {
+  background: rgba(37, 140, 244, 0.12);
+  border-color: rgba(37, 140, 244, 0.3);
+}
+
+.feature-icon {
+  font-size: 24px;
+}
+
+.feature-title {
+  font-weight: 700;
+  font-size: 1rem;
+  color: #ffffff;
+  margin: 0;
+}
+
+.feature-desc {
+  font-size: 0.88rem;
+  color: #94a3b8;
+  line-height: 1.5;
+  margin: 0;
+}
+
+/* ---------- Services Section ---------- */
 .services-section {
-  margin-bottom: 80px;
+  margin-bottom: 96px;
+}
+
+.services-header {
+  text-align: center;
+  margin-bottom: 48px;
 }
 
 .services-layout {
   display: grid;
-  grid-template-columns: 1fr 2fr;
-  gap: 40px;
+  grid-template-columns: 1fr 2.5fr;
+  gap: 32px;
 }
 
 .service-tabs {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .service-tab {
-  padding: 16px 24px;
+  padding: 14px 22px;
   border-radius: 12px;
   background: transparent;
-  border: none;
+  border: 1px solid rgba(255, 255, 255, 0.06);
   text-align: left;
-  font-size: 1.1rem;
+  font-size: 0.95rem;
   font-weight: 600;
-  color: #4a4a4a;
+  color: #94a3b8;
   cursor: pointer;
   transition: all 0.2s;
+  font-family: 'Inter', sans-serif;
 }
 
 .service-tab:hover {
-  background: rgba(0,0,0,0.03);
+  background: rgba(255, 255, 255, 0.05);
+  color: #e2e8f0;
 }
 
 .service-tab.active {
-  background: #273e27;
-  color: white;
-  box-shadow: 0 4px 15px rgba(39, 62, 39, 0.2);
+  background: rgba(37, 140, 244, 0.15);
+  border-color: rgba(37, 140, 244, 0.45);
+  color: #258cf4;
+  box-shadow: 0 4px 16px rgba(37, 140, 244, 0.15);
 }
 
 .service-content {
-  background: #fff;
+  background: rgba(24, 38, 52, 0.7);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 24px;
   padding: 40px;
-  box-shadow: 0 10px 30px rgba(0,0,0,0.05);
   display: flex;
   gap: 40px;
   align-items: center;
@@ -256,35 +339,78 @@
 }
 
 .service-text h3 {
-  font-size: 2rem;
-  margin-top: 0;
-  margin-bottom: 16px;
-  color: #1a1a1a;
+  font-size: 1.8rem;
+  font-weight: 800;
+  color: #ffffff;
+  margin: 0 0 16px 0;
+  letter-spacing: -0.03em;
 }
 
 .service-text p {
-  color: #666;
-  line-height: 1.6;
-  font-size: 1.05rem;
+  color: #94a3b8;
+  line-height: 1.7;
+  font-size: 1rem;
   margin-bottom: 24px;
+}
+
+.service-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(37, 140, 244, 0.1);
+  border: 1px solid rgba(37, 140, 244, 0.25);
+  padding: 10px 16px;
+  border-radius: 12px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #258cf4;
 }
 
 .service-image {
   flex: 1;
-  height: 250px;
-  background: #f5f5f5;
+  height: 240px;
   border-radius: 16px;
   overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
 }
 
 .service-image img {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  transition: transform 0.4s;
 }
 
+.service-image:hover img {
+  transform: scale(1.04);
+}
+
+/* ---------- Responsive ---------- */
 @media (max-width: 900px) {
-  .hero-section, .features-grid, .services-layout, .feature-images {
+  .landing-inner {
+    padding: 0 24px;
+  }
+
+  .hero-section,
+  .features-grid,
+  .services-layout,
+  .feature-images {
     grid-template-columns: 1fr;
+  }
+
+  .hero-title {
+    font-size: 2.8rem;
+  }
+
+  .landing-header {
+    flex-direction: column;
+    gap: 16px;
+    text-align: center;
+    margin-bottom: 40px;
+  }
+
+  .nav-links {
+    display: none;
   }
 }

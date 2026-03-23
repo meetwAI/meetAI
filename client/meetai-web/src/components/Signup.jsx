@@ -42,9 +42,8 @@ export default function Signup() {
       }
 
       const payload = await response.json();
-      localStorage.setItem('meetai_token', payload.token);
       localStorage.setItem('meetai_user', JSON.stringify(payload.user));
-      try { connectSocket(payload.token); } catch (e) { console.error('socket connect failed', e); }
+        try { connectSocket(); } catch (e) { console.error('socket connect failed', e); }
       navigate('/profile-setup', { replace: true });
     } catch (submitError) {
       setError(submitError?.message || 'Unable to create account');

@@ -4,12 +4,13 @@ const express = require('express');
 const cors = require('cors');
 const { Server } = require('socket.io');
 const { io: ioClient } = require('socket.io-client');
+const { requireEnv, requireNumberEnv } = require('../config/env');
 const { loginRateLimiter } = require('./rate-limiters/loginRateLimiter');
 
-const PORT = process.env.GATEWAY_PORT || 4010;
-const MEETING_SERVICE_URL = process.env.MEETING_SERVICE_URL || 'http://localhost:4001';
-const AUTH_SERVICE_URL = process.env.AUTH_SERVICE_URL || 'http://localhost:4020';
-const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:5173';
+const PORT = requireNumberEnv('GATEWAY_PORT');
+const MEETING_SERVICE_URL = requireEnv('MEETING_SERVICE_URL');
+const AUTH_SERVICE_URL = requireEnv('AUTH_SERVICE_URL');
+const FRONTEND_ORIGIN = requireEnv('FRONTEND_ORIGIN');
 
 const app = express();
 app.use(
@@ -17,10 +18,46 @@ app.use(
     origin: [FRONTEND_ORIGIN],
     credentials: true,
     methods: ['GET', 'POST', 'PATCH', 'DELETE'],
-    exposedHeaders: ['x-access-token'],
   }),
 );
 app.use(express.json());
+
+const parseCookieHeader = (cookieHeader = '') => {
+  const parts = String(cookieHeader || '').split(';');
+  const cookies = {};
+  for (const part of parts) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    const separator = trimmed.indexOf('=');
+    if (separator <= 0) continue;
+    const key = trimmed.slice(0, separator);
+    const value = trimmed.slice(separator + 1);
+    cookies[key] = decodeURIComponent(value);
+  }
+  return cookies;
+};
+
+const getCookieValue = (cookieHeader, name) => parseCookieHeader(cookieHeader)[name] || '';
+
+const getCookieFromSetCookie = (setCookieHeader, name) => {
+  const entries = Array.isArray(setCookieHeader)
+    ? setCookieHeader
+    : setCookieHeader
+      ? [setCookieHeader]
+      : [];
+
+  for (const entry of entries) {
+    const pair = String(entry || '').split(';')[0];
+    if (!pair) continue;
+    const separator = pair.indexOf('=');
+    if (separator <= 0) continue;
+    const key = pair.slice(0, separator).trim();
+    if (key !== name) continue;
+    return decodeURIComponent(pair.slice(separator + 1));
+  }
+
+  return '';
+};
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
@@ -33,17 +70,23 @@ app.get('/health', (_req, res) => {
 const proxyAuth = (path, req, res) => {
   const targetUrl = new URL(path, AUTH_SERVICE_URL);
   const client = targetUrl.protocol === 'https:' ? https : http;
-  const body = JSON.stringify(req.body || {});
+  const hasBody = req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH';
+  const body = hasBody ? JSON.stringify(req.body || {}) : null;
+
+  const headers = {
+    Cookie: req.headers.cookie || '',
+  };
+
+  if (hasBody) {
+    headers['Content-Type'] = 'application/json';
+    headers['Content-Length'] = Buffer.byteLength(body);
+  }
 
   const proxyReq = client.request(
     targetUrl,
     {
       method: req.method,
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(body),
-        Cookie: req.headers.cookie || '',
-      },
+      headers,
     },
     (proxyRes) => {
       let data = '';
@@ -53,6 +96,9 @@ const proxyAuth = (path, req, res) => {
       proxyRes.on('end', () => {
         if (proxyRes.headers['set-cookie']) {
           res.set('set-cookie', proxyRes.headers['set-cookie']);
+        }
+        if (proxyRes.headers.location) {
+          res.set('location', proxyRes.headers.location);
         }
         res
           .status(proxyRes.statusCode || 200)
@@ -67,7 +113,9 @@ const proxyAuth = (path, req, res) => {
     res.status(502).json({ message: 'Auth service unavailable.' });
   });
 
-  proxyReq.write(body);
+  if (hasBody) {
+    proxyReq.write(body);
+  }
   proxyReq.end();
 };
 
@@ -80,16 +128,19 @@ const verifyAccess = (req, res, next) => {
   const refreshUrl = new URL('/refresh', AUTH_SERVICE_URL);
   const client = targetUrl.protocol === 'https:' ? https : http;
   const authHeader = req.headers.authorization || '';
+  const cookieHeader = req.headers.cookie || '';
+  const accessCookieToken = getCookieValue(cookieHeader, 'meetai_access');
 
   const applyVerifiedSession = ({ user, accessToken, setCookieHeader }) => {
     if (setCookieHeader) {
       res.set('set-cookie', setCookieHeader);
     }
     if (accessToken) {
-      res.set('x-access-token', accessToken);
       req.authToken = accessToken;
     } else {
-      req.authToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
+      req.authToken = authHeader.startsWith('Bearer ')
+        ? authHeader.slice(7)
+        : accessCookieToken;
     }
     req.authUser = user;
     return next();
@@ -119,7 +170,8 @@ const verifyAccess = (req, res, next) => {
 
           try {
             const parsed = JSON.parse(refreshData || '{}');
-            const newAccessToken = parsed?.token || '';
+            const newAccessToken =
+              getCookieFromSetCookie(refreshRes.headers['set-cookie'], 'meetai_access') || '';
             const user = parsed?.user || null;
             if (!newAccessToken || !user) {
               return unauthorized();
@@ -171,10 +223,12 @@ const verifyAccess = (req, res, next) => {
           verifiedUser = null;
         }
 
-        const nextAccessToken = proxyRes.headers['x-access-token'];
+        if (!verifiedUser) {
+          return refreshSession();
+        }
+
         return applyVerifiedSession({
           user: verifiedUser,
-          accessToken: nextAccessToken,
           setCookieHeader: proxyRes.headers['set-cookie'],
         });
       });
@@ -201,7 +255,7 @@ const proxyMeetingService = (method, path, req, res) => {
 
   const headers = {
     Accept: 'application/json',
-    Authorization: req.authToken ? `Bearer ${req.authToken}` : req.headers.authorization || '',
+    Authorization: req.authToken ? `Bearer ${req.authToken}` : '',
     'x-user-id': req.authUser?.id ? String(req.authUser.id) : '',
   };
 
@@ -247,6 +301,9 @@ app.post('/login', loginRateLimiter, (req, res) => proxyAuth('/login', req, res)
 app.post('/signup', loginRateLimiter, (req, res) => proxyAuth('/signup', req, res));
 app.post('/refresh', (req, res) => proxyAuth('/refresh', req, res));
 app.post('/logout', (req, res) => proxyAuth('/logout', req, res));
+app.post('/verify', (req, res) => proxyAuth('/verify', req, res));
+app.get('/auth/google', (req, res) => proxyAuth(req.originalUrl, req, res));
+app.get('/auth/google/callback', (req, res) => proxyAuth(req.originalUrl, req, res));
 
 app.use(verifyAccess); // verification required for all routes below
 
@@ -345,8 +402,11 @@ const isBinaryPayload = (payload) =>
   (payload && typeof payload === 'object' && payload.type === 'Buffer');
 
 io.use((socket, next) => {
-  const token = socket.handshake.auth?.token;
-  if (!token) {
+  const token = socket.handshake.auth?.token || '';
+  const cookieHeader = socket.handshake.headers?.cookie || '';
+  const accessCookieToken = getCookieValue(cookieHeader, 'meetai_access');
+  const bearerToken = token || accessCookieToken;
+  if (!bearerToken) {
     return next(new Error('Unauthorized'));
   }
 
@@ -356,7 +416,10 @@ io.use((socket, next) => {
     targetUrl,
     {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
+      headers: {
+        Authorization: bearerToken ? `Bearer ${bearerToken}` : '',
+        Cookie: cookieHeader,
+      },
     },
     (proxyRes) => {
       if (proxyRes.statusCode !== 200) {

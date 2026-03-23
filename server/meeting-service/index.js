@@ -1,10 +1,11 @@
 const http = require('http');
 const express = require('express');
 const cors = require('cors');
+const { requireNumberEnv } = require('../config/env');
 const { setupSocket } = require('./socket');
 const { query } = require('../db/client');
 
-const PORT = process.env.PORT || 4001;
+const PORT = requireNumberEnv('PORT');
 
 const app = express();
 app.use(cors({ origin: '*', methods: ['GET', 'POST', 'PATCH', 'DELETE'] }));
@@ -14,10 +15,19 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
 
-app.post('/meetings', (req, res) => {
+const requireUserId = (req, res) => {
   const userId = Number(req.headers['x-user-id']);
   if (!Number.isFinite(userId) || userId <= 0) {
-    return res.status(401).json({ message: 'Unauthorized' });
+    res.status(401).json({ message: 'Unauthorized' });
+    return null;
+  }
+  return userId;
+};
+
+app.post('/meetings', (req, res) => {
+  const userId = requireUserId(req, res);
+  if (!userId) {
+    return;
   }
 
   const startedAt = new Date();
@@ -51,7 +61,12 @@ app.post('/meetings', (req, res) => {
     });
 });
 
-app.get('/meetings/dummy', (_req, res) => {
+app.get('/meetings/dummy', (req, res) => {
+  const userId = requireUserId(req, res);
+  if (!userId) {
+    return;
+  }
+
   return query(
     `SELECT
       id,
@@ -61,8 +76,10 @@ app.get('/meetings/dummy', (_req, res) => {
       COALESCE(full_transcript->'participants', '[]'::jsonb) AS participants,
       COALESCE(full_transcript->'messages', '[]'::jsonb) AS messages
     FROM meetings
+    WHERE user_id = $1
     ORDER BY date DESC
     LIMIT 25`,
+    [userId],
   )
     .then((result) => {
       const meetings = result.rows.map((row) => ({
@@ -82,6 +99,11 @@ app.get('/meetings/dummy', (_req, res) => {
 });
 
 app.get('/meetings/recent', (req, res) => {
+  const userId = requireUserId(req, res);
+  if (!userId) {
+    return;
+  }
+
   const rawLimit = Number(req.query.limit);
   const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 25) : 3;
 
@@ -96,9 +118,10 @@ app.get('/meetings/recent', (req, res) => {
       start_time,
       end_time
     FROM meetings
+    WHERE user_id = $1
     ORDER BY COALESCE(end_time, date) DESC
-    LIMIT $1`,
-    [limit],
+    LIMIT $2`,
+    [userId, limit],
   )
     .then((result) => {
       const meetings = result.rows.map((row) => ({
@@ -121,6 +144,11 @@ app.get('/meetings/recent', (req, res) => {
 });
 
 app.get('/meetings/:meetingId', (req, res) => {
+  const userId = requireUserId(req, res);
+  if (!userId) {
+    return;
+  }
+
   const meetingId = Number(req.params.meetingId);
   if (!Number.isFinite(meetingId) || meetingId <= 0) {
     return res.status(400).json({ message: 'Invalid meeting id.' });
@@ -139,9 +167,9 @@ app.get('/meetings/:meetingId', (req, res) => {
       start_time,
       end_time
     FROM meetings
-    WHERE id = $1
+    WHERE id = $1 AND user_id = $2
     LIMIT 1`,
-    [meetingId],
+    [meetingId, userId],
   )
     .then((result) => {
       const row = result.rows[0];
@@ -169,6 +197,11 @@ app.get('/meetings/:meetingId', (req, res) => {
 });
 
 app.post('/meetings/:meetingId/messages', (req, res) => {
+  const userId = requireUserId(req, res);
+  if (!userId) {
+    return;
+  }
+
   const meetingId = Number(req.params.meetingId);
   if (!Number.isFinite(meetingId) || meetingId <= 0) {
     return res.status(400).json({ message: 'Invalid meeting id.' });
@@ -195,9 +228,9 @@ app.post('/meetings/:meetingId/messages', (req, res) => {
        COALESCE(full_transcript->'messages', '[]'::jsonb) || $1::jsonb,
        true
      )
-     WHERE id = $2
+     WHERE id = $2 AND user_id = $3
      RETURNING id`,
-    [JSON.stringify([message]), meetingId],
+    [JSON.stringify([message]), meetingId, userId],
   )
     .then((result) => {
       if (!result.rowCount) {
@@ -213,15 +246,15 @@ app.post('/meetings/:meetingId/messages', (req, res) => {
 
 app.patch('/meetings/:meetingId/title', (req, res) => {
   const meetingId = Number(req.params.meetingId);
-  const userId = Number(req.headers['x-user-id']);
+  const userId = requireUserId(req, res);
   const title = String(req.body?.title || '').trim();
 
   if (!Number.isFinite(meetingId) || meetingId <= 0) {
     return res.status(400).json({ message: 'Invalid meeting id.' });
   }
 
-  if (!Number.isFinite(userId) || userId <= 0) {
-    return res.status(401).json({ message: 'Unauthorized' });
+  if (!userId) {
+    return;
   }
 
   if (!title) {
@@ -255,13 +288,13 @@ app.patch('/meetings/:meetingId/title', (req, res) => {
 
 app.delete('/meetings/:meetingId', (req, res) => {
   const meetingId = Number(req.params.meetingId);
-  const userId = Number(req.headers['x-user-id']);
+  const userId = requireUserId(req, res);
 
   if (!Number.isFinite(meetingId) || meetingId <= 0) {
     return res.status(400).json({ message: 'Invalid meeting id.' });
   }
-  if (!Number.isFinite(userId) || userId <= 0) {
-    return res.status(401).json({ message: 'Unauthorized' });
+  if (!userId) {
+    return;
   }
 
   return query(
@@ -283,6 +316,11 @@ app.delete('/meetings/:meetingId', (req, res) => {
 });
 
 app.post('/meetings/:meetingId/complete', (req, res) => {
+  const userId = requireUserId(req, res);
+  if (!userId) {
+    return;
+  }
+
   const meetingId = Number(req.params.meetingId);
   if (!Number.isFinite(meetingId) || meetingId <= 0) {
     return res.status(400).json({ message: 'Invalid meeting id.' });
@@ -306,9 +344,9 @@ app.post('/meetings/:meetingId/complete', (req, res) => {
            ),
            true
          )
-     WHERE id = $1
+     WHERE id = $1 AND user_id = $2
      RETURNING id, start_time, end_time, duration_minutes`,
-    [meetingId],
+    [meetingId, userId],
   )
     .then((result) => {
       const row = result.rows[0];

@@ -1,10 +1,14 @@
 const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
+const session = require('express-session');
+const passport = require('passport');
+const { requireEnv, requireNumberEnv } = require('../config/env');
 const authRoutes = require('./routes/auth');
 
-const PORT = process.env.AUTH_PORT || 4020;
-const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:5173';
+const PORT = requireNumberEnv('AUTH_PORT');
+const FRONTEND_ORIGIN = requireEnv('FRONTEND_ORIGIN');
+const SESSION_SECRET = requireEnv('SESSION_SECRET');
 
 const app = express();
 app.use(
@@ -12,10 +16,22 @@ app.use(
     origin: [FRONTEND_ORIGIN],
     credentials: true,
     methods: ['GET', 'POST'],
-    exposedHeaders: ['x-access-token'],
   }),
 );
 app.use(cookieParser());
+app.use(
+  session({
+    secret: SESSION_SECRET,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
+    },
+  }),
+);
+app.use(passport.initialize());
 app.use(express.json());
 
 app.get('/health', (_req, res) => {

@@ -14,28 +14,60 @@ This document explains authentication in meetAI across gateway, auth-service, an
 
 ## Auth Flow Overview
 
-1. Frontend posts credentials to gateway `POST /login`.
+1. Frontend posts credentials to the API base URL `POST /login` (typically the gateway; may be auth-service directly if `VITE_AUTH_URL` is set).
 2. Gateway applies login rate limit and proxies to auth-service `POST /login`.
 3. Auth-service validates username/password from `users` table.
 4. Auth-service issues:
    - short-lived access token (JWT)
    - longer refresh token (JWT)
-5. Refresh token is set in `HttpOnly` cookie `meetai_refresh`.
-6. Access token is returned in response body as `token` and stored in `localStorage` by frontend.
-7. Protected gateway routes are enforced by `verifyAccess` middleware in gateway.
-8. Gateway `verifyAccess` first calls auth-service `POST /verify` using the current access token.
-9. If `/verify` fails (expired/invalid access token), gateway calls auth-service `POST /refresh` using the `meetai_refresh` cookie.
-10. If refresh succeeds, gateway forwards the new access token in `x-access-token` and continues the original protected request.
+5. Access token is set in `HttpOnly` cookie `meetai_access`.
+6. Refresh token is set in `HttpOnly` cookie `meetai_refresh`.
+7. Frontend stores only non-sensitive user profile data (`meetai_user`) in `localStorage`.
+8. Protected gateway routes are enforced by `verifyAccess` middleware in gateway.
+9. Gateway `verifyAccess` first calls auth-service `POST /verify` using the current access token.
+10. If `/verify` fails (expired/invalid access token), gateway calls auth-service `POST /refresh` using the `meetai_refresh` cookie.
+11. If refresh succeeds, auth-service sets a new `meetai_access` cookie and gateway continues the original protected request.
+
+## Google OAuth Flow
+
+1. Frontend sends the user to `GET /auth/google` (gateway or auth-service).
+2. Auth-service redirects to Google for consent.
+3. Google redirects back to `GET /auth/google/callback`.
+4. Auth-service:
+   - verifies Google profile + email
+   - finds or creates a user record
+   - issues access + refresh tokens
+   - sets `meetai_access` and `meetai_refresh` cookies
+5. Auth-service redirects back to the frontend with `?oauth=success` or `?oauth=error`.
+6. Frontend should call `POST /verify` (or any protected API) to fetch the user profile and store `meetai_user` locally.
+7. Cookies must be set on the same host that the frontend uses for API calls (typically `http://localhost:4010` via gateway).
 
 ## Tokens and TTL
 
 Defined in `server/auth-service/services/tokenService.js`:
 
-- Access token TTL: `JWT_TTL_SECONDS` (default `20` seconds)
-- Refresh token TTL: `REFRESH_TTL_SECONDS` (default `10` days)
-- Both token hashes are stored in Redis:
+- JWT signing key envs:
+  - `JWT_ACTIVE_SECRET` (required; current signing key)
+  - `JWT_PREVIOUS_SECRETS` (optional; comma-separated older keys accepted for verify during rotation)
+  - `JWT_SECRET` (legacy fallback if `JWT_ACTIVE_SECRET` is not set)
+- Access token TTL: `JWT_TTL_SECONDS` (required; set in `docker-compose.yml` to `900` seconds = 15 minutes)
+- Refresh token TTL: `REFRESH_TTL_SECONDS` (required; set in `docker-compose.yml` to `864000` seconds = 10 days)
+- Token hashes and refresh index are stored in Redis:
   - `auth:access:<sha256(token)>`
   - `auth:refresh:<sha256(token)>`
+  - `auth:user_refresh:<userId>` (points to active refresh token hash)
+
+Refresh-token policy:
+
+- Only one active refresh token is allowed per user.
+- When new tokens are issued (login/signup/refresh), any previous refresh token for that user is deleted from Redis before storing the new one.
+- Refresh verification checks both token presence and active-refresh index match.
+
+JWT key rotation policy:
+
+- New tokens are signed with `JWT_ACTIVE_SECRET`.
+- Verification accepts `JWT_ACTIVE_SECRET` and any keys in `JWT_PREVIOUS_SECRETS`.
+- Legacy `JWT_SECRET` is accepted only when `JWT_ACTIVE_SECRET` is not provided.
 
 Token payload includes:
 
@@ -50,33 +82,50 @@ Auth-service routes (proxied by gateway):
 
 - `POST /signup`
   - Request body: `{ name, username, email, password }`
-  - Returns: `{ token, user }`
+  - Returns: `{ user }`
   - Stores password as a one-way `scrypt` hash
+  - Sets access cookie `meetai_access`
   - Sets refresh cookie `meetai_refresh`
 
 - `POST /login`
   - Request body: `{ username, password }`
-  - Returns: `{ token, user }`
+  - Returns: `{ user }`
+  - Sets access cookie `meetai_access`
   - Sets refresh cookie `meetai_refresh`
   - Validates password against stored `scrypt` hash
   - If a legacy plain-text password is found and matches, it is upgraded to a hash on successful login
 
 - `POST /refresh`
   - Uses `meetai_refresh` cookie
-  - Returns: `{ token, user }`
-  - Rotates refresh cookie
+  - Returns: `{ user }`
+  - Revokes the used refresh token in Redis
+  - Invalidates any previously active refresh token for that user
+  - Rotates both access and refresh cookies
 
 - `POST /logout`
-  - Uses `Authorization: Bearer <accessToken>` (optional) and `meetai_refresh` cookie
-  - Revokes both access and refresh tokens in Redis so they cannot be used again
+  - Uses `Authorization: Bearer <accessToken>` (optional), `meetai_access` cookie, and `meetai_refresh` cookie
+  - Revokes access token in Redis
+  - Revokes the provided refresh token in Redis
+  - Clears user-level active refresh-token index in Redis (if available)
+  - Clears the `meetai_access` cookie
   - Clears the `meetai_refresh` cookie
   - Returns: `{ success: true }`
 
 - `POST /verify`
-  - Uses `Authorization: Bearer <accessToken>`
+  - Uses `Authorization: Bearer <accessToken>` or `meetai_access` cookie
   - Returns: `{ user }` on valid access token
   - Returns `401` for missing/expired/invalid access token
   - Does not perform refresh itself
+
+- `GET /auth/google`
+  - Redirects to Google OAuth consent screen
+  - Requires `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_CALLBACK_URL`
+  - Optional `GOOGLE_ALLOWED_DOMAIN` restricts login to a hosted domain
+
+- `GET /auth/google/callback`
+  - Handles Google OAuth callback
+  - Issues access + refresh cookies
+  - Redirects to `${FRONTEND_ORIGIN}/?oauth=success` or `?oauth=error`
 
 ## Gateway Enforcement
 
@@ -86,14 +135,14 @@ In `server/gateway/app.js`:
 - `POST /refresh` and `POST /logout` are proxied directly.
 - `app.use(verifyAccess)` protects all downstream meeting routes.
 - `verifyAccess` behavior for protected routes:
-  - Calls auth-service `POST /verify` with current bearer token
+  - Calls auth-service `POST /verify` with current bearer token and cookies
   - If verify fails, attempts auth-service `POST /refresh` using refresh cookie
   - If refresh succeeds, continues request with refreshed auth context
   - If refresh fails, responds `401 Unauthorized`
 - On successful authorization:
   - `req.authUser` is set
-  - `req.authToken` is set (original or refreshed)
-  - new `x-access-token` and `set-cookie` are forwarded to client
+  - `req.authToken` is set (from bearer token or access cookie; refreshed when needed)
+  - on refresh, new cookies are forwarded to client
 - Gateway forwards `x-user-id` to meeting-service from `req.authUser.id`.
 - All meeting-service proxying goes through a single `proxyMeetingService(method, path, req, res)` helper.
 - Socket.io connections are also verified against `POST /verify` before the handshake completes.
@@ -120,11 +169,10 @@ Frontend files:
 Behavior:
 
 - On login success:
-  - stores `meetai_token` and `meetai_user` in `localStorage`
+  - stores `meetai_user` in `localStorage`
   - relies on cookie-based refresh token via `credentials: 'include'`
 - All authenticated requests use `fetchWithAuth`:
-  - adds `Authorization` from `meetai_token`
-  - if response has `x-access-token`, updates local token
+  - relies on `meetai_access` and `meetai_refresh` cookies
   - on `401`, attempts one refresh call then retries original request once
 - QueryClient global `401` handler clears local auth and redirects to `/`.
 
