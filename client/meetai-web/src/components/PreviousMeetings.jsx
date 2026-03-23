@@ -1,9 +1,9 @@
-﻿import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
 import { fetchWithAuth } from '../api/fetchWithAuth';
 import moment from 'moment';
-
+import '../styles/PreviousMeetings.css';
 
 export default function PreviousMeetings() {
   const [selectedId, setSelectedId] = useState(null);
@@ -292,10 +292,10 @@ export default function PreviousMeetings() {
                 <span className="meeting-date">{moment(meeting.date).format('DD-MMM-YYYY')}</span>
               </div>
               <p className="meeting-summary">{meeting.summary}</p>
-              <div className="meeting-meta">
+              {/* <div className="meeting-meta">
                 <span>{meeting.participants.length} participants</span>
                 <span>View conversation</span>
-              </div>
+              </div> */}
             </button>
           ))}
         </div>

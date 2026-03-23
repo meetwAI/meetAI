@@ -3,22 +3,29 @@
   flex-direction: column;
   height: 100vh;
   overflow: hidden;
-  background-color: var(--zen-brown-littledarker);
+  background: var(--zen-brown-littledarker);
 }
 
-/* Topbar (replaces left sidebar) */
+/* =========================
+   TOPBAR
+========================= */
+
 .topbar {
   display: flex;
   align-items: center;
   gap: 24px;
   height: 72px;
   padding: 0 20px;
-  background: rgb(0 0 0 / 85%);
+
+  background: rgba(70, 46, 155, 0.85);
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
+
   color: var(--zen-cream);
-  border-bottom: 1px solid rgba(245, 240, 229, 0.12);
+
+  border-bottom: 1px solid rgba(245,240,229,0.12);
   box-shadow: 0 6px 18px rgba(0,0,0,0.35);
+
   z-index: 30;
 }
 
@@ -44,6 +51,9 @@
   justify-content: flex-end;
 }
 
+/* =========================
+   PROJECT NAME
+========================= */
 
 .project-name {
   font-size: 1.25rem;
@@ -52,80 +62,105 @@
   color: var(--zen-cream);
 }
 
+/* =========================
+   NAV LINKS
+========================= */
 
 .topbar-nav .nav-link {
   color: var(--zen-cream);
   text-decoration: none;
-  font-size: 1rem;
-  padding: 8px 12px;
+  font-size: 0.95rem;
+
+  padding: 8px 14px;
   border-radius: 10px;
+
   display: flex;
   align-items: center;
   gap: 8px;
+
   transition: background 0.18s ease, transform 0.12s ease;
 }
 
 .topbar-nav .nav-link:hover,
 .topbar-nav .nav-link.active {
-  background: rgba(94, 68, 49, 0.18);
+  background: rgba(94,68,49,0.18);
   transform: translateY(-1px);
 }
+
+/* =========================
+   RECORD BUTTON
+========================= */
 
 .record-pill {
   position: relative;
+
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+
   height: 44px;
-  padding: 0;
+  width: 44px;
+
   border-radius: 999px;
-  border: 1px solid rgba(245, 240, 229, 0.35);
-  background: rgba(245, 240, 229, 0.12);
+  border: 1px solid rgba(245,240,229,0.35);
+
+  background: rgba(245,240,229,0.12);
   color: var(--zen-cream);
+
   cursor: pointer;
   overflow: hidden;
-  transition: background 0.2s ease, border-color 0.2s ease, width 0.25s ease;
-  width: 44px;
+
+  transition: background 0.2s ease,
+              border-color 0.2s ease,
+              width 0.25s ease;
 }
 
 .record-pill__icon {
-  font-size: 1.35rem;
-  line-height: 1;
   position: absolute;
   inset: 0;
+
   display: grid;
   place-items: center;
+
   opacity: 1;
-  transform: translateY(-1px);
-  transition: transform 0.25s ease, opacity 0.2s ease;
+
+  transition: transform 0.25s ease,
+              opacity 0.2s ease;
 }
 
 .record-pill__icon svg {
   width: 20px;
   height: 20px;
-  display: block;
 }
 
 .record-pill__text {
-  white-space: nowrap;
-  font-weight: 600;
-  font-size: 0.95rem;
   position: absolute;
   inset: 0;
+
   display: grid;
   place-items: center;
-  text-align: center;
+
+  font-weight: 600;
+  font-size: 0.9rem;
+
   opacity: 0;
   max-width: 0;
+
+  white-space: nowrap;
+
   transform: translateX(-8px);
-  transition: opacity 0.2s ease, transform 0.25s ease, max-width 0.25s ease;
+
+  transition: opacity 0.2s ease,
+              transform 0.25s ease,
+              max-width 0.25s ease;
 }
+
+/* Hover animation */
 
 .record-pill:hover {
   width: 170px;
-  background: rgba(245, 240, 229, 0.22);
-  border-color: rgba(245, 240, 229, 0.6);
+  background: rgba(245,240,229,0.22);
+  border-color: rgba(245,240,229,0.6);
 }
 
 .record-pill:hover .record-pill__icon {
@@ -139,21 +174,19 @@
   transform: translateX(0);
 }
 
+/* =========================
+   MAIN CONTENT
+========================= */
 
-
-
-
-
-
-/* Main content should account for topbar height */
 .main-content {
   flex: 1;
-  background-color: #7e7e7e;
+
   padding: 24px;
   padding-top: 32px;
-  height: calc(100vh - 72px);
-  min-height: 0;
-  overflow: hidden;
-}
 
-/* remove sidebar-specific closed behaviour and toggle styles */
+  height: calc(100vh - 72px);
+
+  background: var(--zen-brown-littledarker);
+
+  overflow-y: auto;
+}

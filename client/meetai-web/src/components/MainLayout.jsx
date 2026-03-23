@@ -1,7 +1,7 @@
 import React from 'react';
 import { Link, Outlet, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import './MainLayout.css';
+import '../styles/MainLayout.css';
 import { getSocket, connectSocket } from '../api/socketClient';
 import { fetchWithAuth } from '../api/fetchWithAuth';
 import {Plus} from 'lucide-react'
@@ -15,9 +15,9 @@ const MainLayout = ({ username = 'John Doe', userImage = 'https://via.placeholde
     const audioStreamRef = React.useRef(null);
     const mediaRecorderRef = React.useRef(null);
     const socketRef = React.useRef(null);
+    const activeMeetingIdRef = React.useRef(null);
     const chunkIndexRef = React.useRef(0);
     const chunkStartedAtRef = React.useRef(0);
-    const activeMeetingIdRef = React.useRef(null);
 
     const appendMessageToMeetingCache = React.useCallback((meetingId, message) => {
         queryClient.setQueryData(['meeting', String(meetingId)], (current) => {
@@ -244,7 +244,9 @@ const MainLayout = ({ username = 'John Doe', userImage = 'https://via.placeholde
         <div className="main-layout">
             <div className="topbar" role="banner">
                 <div className="topbar-left">
-                    <div className="project-name">meetAI</div>
+                    <Link to="/" className="nav-link project-name" aria-label="Home">
+                        meetAI
+                    </Link>
                 </div>
                 <nav className="topbar-center topbar-nav" aria-label="Primary">
                     <Link to="/" className="nav-link" aria-label="Home">
@@ -252,6 +254,10 @@ const MainLayout = ({ username = 'John Doe', userImage = 'https://via.placeholde
                     </Link>
                     <Link to="/meetings" className="nav-link" aria-label="Meetings">
                         Meetings
+                    </Link>
+
+                    <Link to="/upcoming-meetings" className="nav-link" aria-label="Upcoming Meetings">
+                        Upcoming Meetings
                     </Link>
                     <Link to="/profile" className="nav-link" aria-label="Profile">
                         Profile

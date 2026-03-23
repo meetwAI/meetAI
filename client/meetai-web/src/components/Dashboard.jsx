@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { fetchWithAuth } from '../api/fetchWithAuth';
 import moment from 'moment';
+import '../styles/Dashboard.css';
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -88,7 +89,7 @@ export default function Dashboard() {
 
       <section className="dashboard-section">
         <div className="section-title">
-          <h2>Analytics</h2>
+          <h2 className="text-white">Analytics</h2>
           <span>This week</span>
         </div>
         <div className="analytics-grid">

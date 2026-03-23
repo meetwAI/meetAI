@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { disconnectSocket } from '../api/socketClient';
 import { fetchWithAuth } from '../api/fetchWithAuth';
+import '../styles/Profile.css';
 
 export default function Profile() {
   const API_URL = import.meta.env.VITE_AUTH_URL || import.meta.env.VITE_API_URL;

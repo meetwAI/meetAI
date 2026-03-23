@@ -10,7 +10,9 @@ import Profile from './components/Profile';
 import ProfileSetup from './components/ProfileSetup';
 
 import LandingPage from './components/LandingPage';
+import UpcomingMeetings from './components/UpcomingMeetings';
 
+//checks if localstorage has token
 const RequireAuth = ({ children }) => {
   const token = localStorage.getItem('meetai_token');
   if (!token) {
@@ -19,6 +21,8 @@ const RequireAuth = ({ children }) => {
   return children;
 };
 
+
+//Pages you should only see if you are not logged in
 const AuthRoute = ({ children }) => {
   const token = localStorage.getItem('meetai_token');
   if (token) {
@@ -71,6 +75,7 @@ function App() {
           <Route index element={<Dashboard />} />
           <Route path="meetings" element={<PreviousMeetings />} />
           <Route path="meetings/:meetingid" element={<PreviousMeetings />} />
+          <Route path="upcoming-meetings" element={<UpcomingMeetings />} />
           <Route path="profile" element={<Profile />} />
         </Route>
       </Routes>

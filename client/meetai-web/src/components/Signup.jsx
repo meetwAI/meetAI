@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Container, Row, Col, Form, Button } from 'react-bootstrap';
-import './Login.css';
+import '../styles/Login.css';
 import { connectSocket } from '../api/socketClient';
 
 export default function Signup() {
