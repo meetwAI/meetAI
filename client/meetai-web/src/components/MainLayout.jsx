@@ -1,16 +1,18 @@
 import React from 'react';
-import { Link, Outlet, useNavigate } from 'react-router-dom';
+import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import './MainLayout.css';
 import { getSocket, connectSocket } from '../api/socketClient';
 import { fetchWithAuth } from '../api/fetchWithAuth';
-import {Plus} from 'lucide-react'
+import { Menu, Mic, Plus } from 'lucide-react';
+
 const MainLayout = () => {
     const navigate = useNavigate();
     const queryClient = useQueryClient();
     const [captureState, setCaptureState] = React.useState('idle');
     const [captureError, setCaptureError] = React.useState('');
     const [serverMessage, setServerMessage] = React.useState('');
+    const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
     const displayStreamRef = React.useRef(null);
     const audioStreamRef = React.useRef(null);
     const mediaRecorderRef = React.useRef(null);
@@ -237,34 +239,84 @@ const MainLayout = () => {
         <div className="main-layout">
             <div className="topbar" role="banner">
                 <div className="topbar-left">
+                    <span className="brand-icon" aria-hidden="true">
+                        <Mic size={18} />
+                    </span>
                     <div className="project-name">meetAI</div>
                 </div>
                 <nav className="topbar-center topbar-nav" aria-label="Primary">
-                    <Link to="/" className="nav-link" aria-label="Home">
+                    <NavLink
+                        to="/"
+                        end
+                        className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
+                        aria-label="Home"
+                    >
                         Home
-                    </Link>
-                    <Link to="/meetings" className="nav-link" aria-label="Meetings">
+                    </NavLink>
+                    <NavLink
+                        to="/meetings"
+                        className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
+                        aria-label="Meetings"
+                    >
                         Meetings
-                    </Link>
-                    <Link to="/profile" className="nav-link" aria-label="Profile">
+                    </NavLink>
+                    <NavLink
+                        to="/profile"
+                        className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
+                        aria-label="Profile"
+                    >
                         Profile
-                    </Link>
+                    </NavLink>
                 </nav>
                 <div className="topbar-right">
                     {captureState === 'capturing' ? (
-                        <button type="button" className="primary-button" onClick={stopCapture}>
+                        <button type="button" className="record-action-button stop" onClick={stopCapture}>
                             Stop recording
                         </button>
                     ) : (
-                        <button type="button" className="record-pill" onClick={startCapture} aria-label="Meet With AI">
-                            <span className="record-pill__icon" aria-hidden="true"><Plus /></span>
-                            <span className="record-pill__text">Meet With AI</span>
+                        <button type="button" className="record-action-button" onClick={startCapture} aria-label="Meet With AI">
+                            <Plus size={16} />
+                            <span className="record-action-label">Meet With AI</span>
                         </button>
                     )}
+                    <button
+                        type="button"
+                        className="mobile-menu-toggle"
+                        aria-label="Toggle navigation"
+                        onClick={() => setMobileMenuOpen((open) => !open)}
+                    >
+                        <Menu size={20} />
+                    </button>
                 </div>
             </div>
+
+            <nav className={`mobile-nav ${mobileMenuOpen ? 'open' : ''}`} aria-label="Mobile primary">
+                <NavLink
+                    to="/"
+                    end
+                    className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
+                    onClick={() => setMobileMenuOpen(false)}
+                >
+                    Home
+                </NavLink>
+                <NavLink
+                    to="/meetings"
+                    className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
+                    onClick={() => setMobileMenuOpen(false)}
+                >
+                    Meetings
+                </NavLink>
+                <NavLink
+                    to="/profile"
+                    className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
+                    onClick={() => setMobileMenuOpen(false)}
+                >
+                    Profile
+                </NavLink>
+            </nav>
+
             {(captureState === 'requesting' || captureState === 'capturing' || serverMessage || captureError) && (
-                <div className="px-3" style={{ paddingTop: '8px' }}>
+                <div className="capture-status-strip">
                     {captureState === 'requesting' && (
                         <p className="recap-summary">Waiting for permission to capture a tab…</p>
                     )}

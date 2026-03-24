@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { fetchWithAuth } from '../api/fetchWithAuth';
 import moment from 'moment';
+import './Dashboard.css';
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -52,55 +53,82 @@ export default function Dashboard() {
     ];
   }, [recentMeetings]);
 
+  const formattedRecaps = useMemo(
+    () => recentMeetings.map((meeting) => ({
+      ...meeting,
+      displayDate: meeting?.date ? moment(meeting.date).format('MMM DD, YYYY') : 'Unknown date',
+    })),
+    [recentMeetings],
+  );
+
   return (
-    <div className="dashboard">
-      <header className="dashboard-header">
-        <div>
-          <h1>Dashboard</h1>
-          <p>Here’s a quick look at your latest meetings.</p>
-        </div>
-      </header>
+    <div className="dashboard-shell">
+      <main className="dashboard-main">
+        <section className="dashboard-intro">
+          <h1 className="dashboard-title">Dashboard</h1>
+          <p className="dashboard-subtitle">Here's a quick look at your latest meetings.</p>
+        </section>
 
-      <section className="dashboard-section">
-        <div className="section-title">
-          <h2>Last 3 meetings</h2>
-          <span>Quick recap</span>
-        </div>
-        <div className="recap-cards">
-          {isLoading && <p>Loading meetings…</p>}
-          {!isLoading && recentMeetings.map((meeting, index) => (
-            <article key={meeting.id} className="recap-card" style={{ animation: `fadeIn 0.5s ease-out ${index * 0.1 + 0.3}s both` }}>
-              <div>
-                <h3>{meeting.title}</h3>
-                <p className="recap-date">{meeting.date}</p>
-              </div>
-              <button
-                type="button"
-                className="text-button"
-                onClick={() => navigate(`/meetings/${meeting.id}`)}
+        <section className="dashboard-block">
+          <div className="dashboard-block-header">
+            <h2>Last 3 meetings</h2>
+            <span>Quick recap</span>
+          </div>
+          <div className="meeting-grid">
+            {isLoading && <p className="dashboard-muted">Loading meetings...</p>}
+            {!isLoading && formattedRecaps.length === 0 && (
+              <p className="dashboard-muted">No meetings yet. Start one from the top bar.</p>
+            )}
+            {!isLoading && formattedRecaps.map((meeting, index) => (
+              <article
+                key={meeting.id}
+                className="meeting-card-v2"
+                style={{ animationDelay: `${index * 0.08 + 0.1}s` }}
               >
-                Open recap
-              </button>
-            </article>
-          ))}
-        </div>
-      </section>
+                <div>
+                  <h3 title={meeting.title}>{meeting.title || `Meeting ${meeting.id}`}</h3>
+                  <p className="meeting-card-date">{meeting.displayDate}</p>
+                </div>
+                <button
+                  type="button"
+                  className="meeting-open-btn"
+                  onClick={() => navigate(`/meetings/${meeting.id}`)}
+                >
+                  Open recap
+                </button>
+              </article>
+            ))}
+          </div>
+        </section>
 
-      <section className="dashboard-section">
-        <div className="section-title">
-          <h2>Analytics</h2>
-          <span>This week</span>
+        <section className="dashboard-block">
+          <div className="dashboard-block-header">
+            <h2>Analytics</h2>
+            <span>This week</span>
+          </div>
+          <div className="analytics-grid-v2">
+            {analytics.map((item, index) => (
+              <article
+                key={item.id}
+                className="analytics-card-v2"
+                style={{ animationDelay: `${index * 0.08 + 0.1}s` }}
+              >
+                <p className="analytics-label-v2">{item.label}</p>
+                <h3>{item.value}</h3>
+                <p className="analytics-subtext-v2">{item.subtext}</p>
+              </article>
+            ))}
+          </div>
+        </section>
+      </main>
+
+      <footer className="dashboard-footer">
+        <div>© 2026 meetAI. All rights reserved.</div>
+        <div className="dashboard-footer-links">
+          <button type="button">Privacy Policy</button>
+          <button type="button">Terms of Service</button>
         </div>
-        <div className="analytics-grid">
-          {analytics.map((item, index) => (
-            <article key={item.id} className="analytics-card" style={{ animation: `scaleIn 0.5s ease-out ${index * 0.1}s both` }}>
-              <p className="analytics-label">{item.label}</p>
-              <h3>{item.value}</h3>
-              <p className="analytics-subtext">{item.subtext}</p>
-            </article>
-          ))}
-        </div>
-      </section>
+      </footer>
     </div>
   );
 }
