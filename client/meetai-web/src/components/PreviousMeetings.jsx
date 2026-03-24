@@ -1,11 +1,19 @@
-﻿import { useCallback, useEffect, useMemo, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
+import { useSignals } from '@preact/signals-react/runtime';
 import { fetchWithAuth } from '../api/fetchWithAuth';
 import moment from 'moment';
+import {
+  closePreviousMeetingsSidebar,
+  openPreviousMeetingsSidebar,
+  sidebarState,
+  togglePreviousMeetingsSidebar,
+} from '../globals';
 
 
 export default function PreviousMeetings() {
+  useSignals();
   const [selectedId, setSelectedId] = useState(null);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [draftMessage, setDraftMessage] = useState('');
@@ -14,9 +22,36 @@ export default function PreviousMeetings() {
   const [renameError, setRenameError] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
+  const [showActionsMenu, setShowActionsMenu] = useState(false);
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState('');
+  const actionsMenuRef = useRef(null);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { meetingid } = useParams();
+  const isSidebarOpen = sidebarState.value;
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return undefined;
+    }
+
+    window.closePreviousMeetingsSidebar = closePreviousMeetingsSidebar;
+    window.openPreviousMeetingsSidebar = openPreviousMeetingsSidebar;
+    window.togglePreviousMeetingsSidebar = togglePreviousMeetingsSidebar;
+
+    return () => {
+      if (window.closePreviousMeetingsSidebar === closePreviousMeetingsSidebar) {
+        delete window.closePreviousMeetingsSidebar;
+      }
+      if (window.openPreviousMeetingsSidebar === openPreviousMeetingsSidebar) {
+        delete window.openPreviousMeetingsSidebar;
+      }
+      if (window.togglePreviousMeetingsSidebar === togglePreviousMeetingsSidebar) {
+        delete window.togglePreviousMeetingsSidebar;
+      }
+    };
+  }, []);
 
   const {
     data: meetings = [],
@@ -79,6 +114,28 @@ export default function PreviousMeetings() {
     queryClient.invalidateQueries({ queryKey: ['meeting', String(meetingid)] });
   }, [meetingid, queryClient]);
 
+  useEffect(() => {
+    setShowActionsMenu(false);
+    setIsEditingTitle(false);
+  }, [selectedId]);
+
+  useEffect(() => {
+    if (!showActionsMenu) {
+      return undefined;
+    }
+
+    const handlePointerDown = (event) => {
+      if (actionsMenuRef.current && !actionsMenuRef.current.contains(event.target)) {
+        setShowActionsMenu(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+    };
+  }, [showActionsMenu]);
+
   const normalizedMeetings = useMemo(() => {
     const baseMeetings = meetings.map((meeting) => ({
       id: meeting.id,
@@ -112,6 +169,14 @@ export default function PreviousMeetings() {
     () => normalizedMeetings.find((meeting) => String(meeting.id) === String(selectedId)),
     [normalizedMeetings, selectedId]
   );
+
+  useEffect(() => {
+    if (!selectedMeeting) {
+      setTitleDraft('');
+      return;
+    }
+    setTitleDraft(String(selectedMeeting.title || ''));
+  }, [selectedMeeting]);
 
   const appendMessageToCache = useCallback((meetingId, message) => {
     queryClient.setQueryData(['meetings', 'dummy'], (current) => {
@@ -190,6 +255,8 @@ export default function PreviousMeetings() {
       return;
     }
 
+    setShowActionsMenu(false);
+
     const meetingToDelete = selectedMeeting.id;
     const shouldDelete = window.confirm('Delete this meeting permanently?');
     if (!shouldDelete) {
@@ -231,13 +298,9 @@ export default function PreviousMeetings() {
     }
 
     const currentTitle = String(selectedMeeting.title || '').trim();
-    const nextTitleRaw = window.prompt('Enter a new meeting title', currentTitle);
-    if (nextTitleRaw === null) {
-      return;
-    }
-
-    const nextTitle = nextTitleRaw.trim();
+    const nextTitle = titleDraft.trim();
     if (!nextTitle || nextTitle === currentTitle) {
+      setIsEditingTitle(false);
       return;
     }
 
@@ -256,18 +319,35 @@ export default function PreviousMeetings() {
 
       renameMeetingInCache(selectedMeeting.id, titleFromServer);
       queryClient.invalidateQueries({ queryKey: ['meetings', 'recent', 3] });
+      setTitleDraft(titleFromServer);
+      setIsEditingTitle(false);
     } catch (error) {
       setRenameError(error?.message || 'Failed to rename meeting.');
     } finally {
       setIsRenaming(false);
     }
-  }, [isRenaming, queryClient, renameMeetingInCache, selectedMeeting]);
+  }, [isRenaming, queryClient, renameMeetingInCache, selectedMeeting, titleDraft]);
 
   return (
-    <div className="previous-meetings">
+    <div className={`previous-meetings${isSidebarOpen ? '' : ' sidebar-collapsed'}`}>
       <section className="meeting-list">
         <div className="meeting-list-header">
-          <h2>Previous Meetings</h2>
+          <div className="meeting-list-header-row">
+            <h2>Previous Meetings</h2>
+            <button
+              type="button"
+              className={`sidebar-icon-button${isSidebarOpen ? '' : ' collapsed'}`}
+              onClick={togglePreviousMeetingsSidebar}
+              title="Toggle meetings sidebar"
+              aria-label={isSidebarOpen ? 'Hide meetings sidebar' : 'Show meetings sidebar'}
+            >
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true">
+                <rect x="3" y="4" width="18" height="16" rx="2.5" stroke="currentColor" strokeWidth="1.8" />
+                <line x1="9" y1="5" x2="9" y2="19" stroke="currentColor" strokeWidth="1.8" />
+                <path d="M14 9.5L11.5 12L14 14.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+          </div>
           <p>Click a meeting to review the recap and conversation.</p>
         </div>
 
@@ -285,6 +365,7 @@ export default function PreviousMeetings() {
                 queryClient.invalidateQueries({ queryKey: ['meeting', String(meeting.id)] });
                 navigate(`/meetings/${meeting.id}`);
                 setShowAttachMenu(false);
+                setShowActionsMenu(false);
               }}
             >
               <div className="meeting-card-header">
@@ -302,11 +383,45 @@ export default function PreviousMeetings() {
       </section>
 
       <section className="meeting-detail">
+        <div className="meeting-detail-topbar" />
         {selectedMeeting ? (
           <>
             <header className="meeting-detail-header">
-              <div>
-                <h2>{selectedMeeting.title}</h2>
+              <div className="meeting-title-block">
+                {isEditingTitle ? (
+                  <form
+                    className="meeting-title-edit"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      handleRenameMeeting();
+                    }}
+                  >
+                    <input
+                      type="text"
+                      value={titleDraft}
+                      onChange={(event) => setTitleDraft(event.target.value)}
+                      aria-label="Edit meeting title"
+                      disabled={isRenaming}
+                      autoFocus
+                    />
+                    <button type="submit" disabled={isRenaming}>
+                      {isRenaming ? 'Saving...' : 'Save'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsEditingTitle(false);
+                        setRenameError('');
+                        setTitleDraft(String(selectedMeeting.title || ''));
+                      }}
+                      disabled={isRenaming}
+                    >
+                      Cancel
+                    </button>
+                  </form>
+                ) : (
+                  <h2>{selectedMeeting.title}</h2>
+                )}
                 <p className="meeting-detail-date">{moment(selectedMeeting.date).format('DD-MMM-YYYY')}</p>
               </div>
               <div className="meeting-header-actions">
@@ -317,22 +432,42 @@ export default function PreviousMeetings() {
                     </span>
                   ))}
                 </div>
-                <button
-                  type="button"
-                  className="rename-meeting-button"
-                  onClick={handleRenameMeeting}
-                  disabled={isRenaming}
-                >
-                  {isRenaming ? 'Renaming...' : 'Rename meeting'}
-                </button>
-                <button
-                  type="button"
-                  className="delete-meeting-button"
-                  onClick={handleDeleteMeeting}
-                  disabled={isDeleting}
-                >
-                  {isDeleting ? 'Deleting...' : 'Delete meeting'}
-                </button>
+                <div className="meeting-actions-menu-wrapper" ref={actionsMenuRef}>
+                  <button
+                    type="button"
+                    className="meeting-actions-trigger"
+                    aria-label="Open meeting actions"
+                    aria-expanded={showActionsMenu}
+                    onClick={() => setShowActionsMenu((prev) => !prev)}
+                  >
+                    <span aria-hidden="true">⋮</span>
+                  </button>
+                  {showActionsMenu && (
+                    <div className="meeting-actions-popup">
+                      <button
+                        type="button"
+                        className="rename-meeting-button"
+                        onClick={() => {
+                          setShowActionsMenu(false);
+                          setRenameError('');
+                          setTitleDraft(String(selectedMeeting.title || ''));
+                          setIsEditingTitle(true);
+                        }}
+                        disabled={isRenaming}
+                      >
+                        Rename meeting
+                      </button>
+                      <button
+                        type="button"
+                        className="delete-meeting-button"
+                        onClick={handleDeleteMeeting}
+                        disabled={isDeleting}
+                      >
+                        {isDeleting ? 'Deleting...' : 'Delete meeting'}
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
             </header>
             {renameError && <p className="recap-summary">{renameError}</p>}
