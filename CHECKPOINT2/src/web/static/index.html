@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Live Tab Transcription</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <div class="page-bg"></div>
+    <main class="app-shell">
+      <header class="hero">
+        <p class="eyebrow">Realtime ASR + Diarization</p>
+        <h1>Transcribe shared tab audio in real time</h1>
+        <p class="subhead">
+          Tentative text appears in gray and turns black once committed.
+        </p>
+      </header>
+
+      <section class="controls">
+        <div class="button-row">
+          <button id="shareTabBtn" class="btn btn-primary">Share Tab</button>
+          <button id="useMicBtn" class="btn btn-secondary">Use Microphone</button>
+          <button id="stopBtn" class="btn btn-danger" disabled>Stop</button>
+        </div>
+
+        <label class="ws-label" for="wsInput">WebSocket URL</label>
+        <input id="wsInput" type="text" />
+        <p id="status" class="status">Idle</p>
+      </section>
+
+      <section class="transcript-wrap">
+        <div class="legend">
+          <span><i class="dot dot-committed"></i>Committed</span>
+          <span><i class="dot dot-buffer"></i>Tentative</span>
+        </div>
+        <div id="linesTranscript" class="transcript"></div>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
