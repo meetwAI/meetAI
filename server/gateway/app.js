@@ -307,6 +307,44 @@ app.get('/auth/google/callback', (req, res) => proxyAuth(req.originalUrl, req, r
 
 app.use(verifyAccess); // verification required for all routes below
 
+app.get('/calendar/events', (req, res) => {
+  const params = new URLSearchParams(req.query || {});
+  const queryString = params.toString();
+  const targetPath = queryString ? `/calendar/events?${queryString}` : '/calendar/events';
+  const targetUrl = new URL(targetPath, AUTH_SERVICE_URL);
+  const client = targetUrl.protocol === 'https:' ? https : http;
+
+  const proxyReq = client.request(
+    targetUrl,
+    {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        'x-user-id': req.authUser?.id ? String(req.authUser.id) : '',
+      },
+    },
+    (proxyRes) => {
+      let data = '';
+      proxyRes.on('data', (chunk) => {
+        data += chunk;
+      });
+      proxyRes.on('end', () => {
+        res
+          .status(proxyRes.statusCode || 200)
+          .set('content-type', proxyRes.headers['content-type'] || 'application/json')
+          .send(data);
+      });
+    },
+  );
+
+  proxyReq.on('error', (error) => {
+    console.error('[gateway] auth service calendar proxy error', error);
+    res.status(502).json({ message: 'Auth service unavailable.' });
+  });
+
+  proxyReq.end();
+});
+
 // Profile setup — auth-service handles persistence
 app.post('/profile', (req, res) => {
   const targetUrl = new URL('/profile', AUTH_SERVICE_URL);

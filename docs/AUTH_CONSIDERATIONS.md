@@ -1,144 +1,64 @@
--- to be 100% production ready
-### 3️⃣ **Rate limiting per username, fails open if Redis is down**
+# Auth Considerations
 
-* **Problem:** If Redis is down, your rate limiting may stop working (“fails open”), allowing brute-force login attempts.
-* **Consequence:** Attackers can guess passwords or abuse endpoints.
-* **Best practice:**
+This document tracks production hardening items for meetAI auth. Items marked **Handled** are already addressed in code. All others are recommended next steps.
 
-  * Implement **rate limiting in memory as a fallback** if Redis is unavailable.
-  * Consider **per-IP + per-user rate limiting** for added protection.
+## Handled
 
----
+1. Access tokens in localStorage -> XSS exposure
+   - Status: **Handled**
+   - Fix: Access tokens are now stored in HttpOnly cookies (`meetai_access`). Frontend stores only `meetai_user`.
 
+2. Refresh tokens not revoked on refresh
+   - Status: **Handled**
+   - Fix: Refresh rotation is enforced. Old refresh tokens are revoked and a single active refresh token is kept per user.
 
+3. Weak JWT secret and no key rotation
+   - Status: **Handled**
+   - Fix: Rotation supported with `JWT_ACTIVE_SECRET` + `JWT_PREVIOUS_SECRETS`. Legacy `JWT_SECRET` is a fallback only.
 
+4. CSRF exposure on refresh cookies
+   - Status: **Handled (partial)**
+   - Fix: Cookies are `SameSite=Strict`. Consider full CSRF tokens for defense-in-depth.
 
+## Recommended Improvements
 
+1. Rate limiting fails open if Redis is down
+   - Risk: Brute-force login attempts become easier.
+   - Recommendation:
+     - Add an in-memory fallback limiter when Redis is unavailable.
+     - Rate limit by both IP and username.
 
+2. Add explicit CSRF tokens for refresh
+   - Risk: Cookie-based refresh endpoints can still be abused in some edge cases.
+   - Recommendation:
+     - Use a double-submit CSRF token on `/refresh`.
 
+3. Add refresh token reuse detection
+   - Risk: If a stolen refresh token is replayed, the system should respond aggressively.
+   - Recommendation:
+     - Detect reuse and revoke all active sessions for that user.
+     - Emit an audit log entry or alert.
 
+4. Add session/device tracking
+   - Risk: Single-session systems make it hard to support multiple devices safely.
+   - Recommendation:
+     - Store session metadata (device, IP, last_seen) and allow per-device revoke.
 
+5. Improve audit logging
+   - Risk: No visibility into auth events or anomalous behavior.
+   - Recommendation:
+     - Log login success/failure, refresh, verify failures, and logout.
 
+6. Harden rate limits with lockout/backoff
+   - Risk: Credential stuffing can still be effective with simple rate limits.
+   - Recommendation:
+     - Exponential backoff and temporary lockout after repeated failures.
 
+7. Remove or guard Redis snapshots in logs
+   - Risk: `logRedisSnapshot` can leak auth metadata in logs.
+   - Recommendation:
+     - Disable in production or gate behind a debug flag.
 
+## Summary
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-********HANLDED******** ### 5️⃣ **Weak JWT secret and no key rotation**
-
-* **Problem:** Your JWT secret is `meetai_dev_secret` (default, weak).
-* **Consequence:** Anyone who guesses or knows it can **sign their own JWTs** and impersonate users.
-* **Best practice:**
-
-  * Use **strong, random secrets** (e.g., 256-bit keys for HS256)
-  * Implement **key rotation**: periodically change JWT secret and invalidate old tokens gracefully.
-
----
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
- ********HANLDED******** ### 4️⃣ **No CSRF protection for refresh cookies** ** handled**
-
-* **Problem:** Even if your refresh token is httpOnly and SameSite=Lax, a CSRF attack can sometimes trigger requests automatically in certain browsers or edge cases.
-* **Consequence:** An attacker could potentially force a user’s browser to call `/auth/refresh` and get a new access token.
-* **Best practice:**
-
-  * Use **SameSite=Strict** or **double-submit CSRF token**
-  * For refresh endpoints, require the refresh request to include a **CSRF token** from memory.
-
----
-
-
-********HANLDED******** ### 1️⃣ **Access tokens in localStorage → XSS exposure** ** handled**
-
-* **Problem:** If your access token is in `localStorage` or `sessionStorage`, **any malicious JS running on your page** (through an XSS vulnerability) can read it.
-* **Consequence:** Attacker can make API calls as that user.
-* **Best practice:**
-
-  * Store access tokens **in memory** (React state, signals, etc.) rather than `localStorage`.
-  * Keep refresh tokens in **httpOnly cookies** (you’re already doing this).
-  * Access token lifetime should remain **short (10–15 min)** to limit exposure.
-
----
-
-********HANLDED******** ### 2️⃣ **Refresh tokens are not revoked on refresh** **handled**
-
-* **Problem:** Every time a client uses a refresh token, your system **issues a new access token but does not invalidate the old refresh token**.
-* **Consequence:** If an attacker steals an old refresh token, they can use it until it expires (TTL).
-* **Best practice:** **Refresh token rotation**
-
-  * Every refresh:
-
-    1. Validate the current refresh token
-    2. Issue a new refresh token
-    3. Replace the old one in Redis
-  * If the old token is used again → reject (prevents replay attacks).
-
----
-
-
-
-
-
-
-
-### ⚡ Summary of Risks
-
-| Risk                          | Severity    | Comment                                     |
-| ----------------------------- | ----------- | ------------------------------------------- |
-| XSS exposure of access tokens | High        | Can be mitigated by using in-memory storage |
-| Refresh token reuse           | Medium-High | Rotation prevents token replay attacks      |
-| Rate limiting fails open      | Medium      | Brute-force attacks become easier           |
-| CSRF on refresh               | Medium      | Mostly mitigated with SameSite=Strict       |
-| Weak JWT secret / no rotation | High        | Could allow full impersonation if leaked    |
-
----
-
-✅ **Overall:** Your system is **functional and fairly standard**, but if this were production at scale, these gaps could lead to **account compromise, token replay, or brute-force attacks**.
-
----
-
-If you want, I can **propose a “production-hardened” version of your flow** that fixes all these points but still keeps your current UX (silent refresh, multi-device, etc.). It’s basically what Stripe/Slack-level APIs do internally.
-
-Do you want me to do that?
+The system is functional and more robust than the initial version. The remaining items are mostly operational hardening, anomaly detection, and defense-in-depth work before production scale.
