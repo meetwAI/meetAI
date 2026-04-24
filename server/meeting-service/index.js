@@ -2,7 +2,6 @@ const http = require('http');
 const express = require('express');
 const cors = require('cors');
 const { requireNumberEnv } = require('../config/env');
-const { setupSocket } = require('./socket');
 const { query } = require('../db/client');
 
 const PORT = requireNumberEnv('PORT');
@@ -244,6 +243,59 @@ app.post('/meetings/:meetingId/messages', (req, res) => {
     });
 });
 
+app.patch('/meetings/:meetingId/transcript', (req, res) => {
+  const userId = requireUserId(req, res);
+  if (!userId) {
+    return;
+  }
+
+  const meetingId = Number(req.params.meetingId);
+  if (!Number.isFinite(meetingId) || meetingId <= 0) {
+    return res.status(400).json({ message: 'Invalid meeting id.' });
+  }
+
+  const aiSessionId = String(req.body?.aiSessionId || '').trim() || null;
+  const asrStatus = String(req.body?.asrStatus || '').trim() || 'active_transcription';
+  const lines = Array.isArray(req.body?.lines) ? req.body.lines : [];
+  const bufferTranscription = String(req.body?.bufferTranscription || '');
+  const bufferDiarization = String(req.body?.bufferDiarization || '');
+  const updatedAt = String(req.body?.updatedAt || '').trim() || new Date().toISOString();
+
+  return query(
+    `UPDATE meetings
+     SET full_transcript = COALESCE(full_transcript, '{}'::jsonb) || jsonb_build_object(
+       'aiSessionId', to_jsonb(COALESCE(NULLIF($1::text, ''), full_transcript->>'aiSessionId')),
+       'asrStatus', to_jsonb($2::text),
+       'lines', $3::jsonb,
+       'bufferTranscription', to_jsonb($4::text),
+       'bufferDiarization', to_jsonb($5::text),
+       'updatedAt', to_jsonb($6::text)
+     )
+     WHERE id = $7 AND user_id = $8
+     RETURNING id`,
+    [
+      aiSessionId,
+      asrStatus,
+      JSON.stringify(lines),
+      bufferTranscription,
+      bufferDiarization,
+      updatedAt,
+      meetingId,
+      userId,
+    ],
+  )
+    .then((result) => {
+      if (!result.rowCount) {
+        return res.status(404).json({ message: 'Meeting not found.' });
+      }
+      return res.json({ ok: true, id: Number(result.rows[0].id) });
+    })
+    .catch((error) => {
+      console.error('[meeting-service] failed to persist transcript state', error);
+      return res.status(500).json({ message: 'Failed to save transcript.' });
+    });
+});
+
 app.patch('/meetings/:meetingId/title', (req, res) => {
   const meetingId = Number(req.params.meetingId);
   const userId = requireUserId(req, res);
@@ -367,7 +419,6 @@ app.post('/meetings/:meetingId/complete', (req, res) => {
 });
 
 const server = http.createServer(app);
-setupSocket(server);
 
 server.listen(PORT, () => {
   // eslint-disable-next-line no-console

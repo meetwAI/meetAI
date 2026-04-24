@@ -3,7 +3,7 @@ const https = require('https');
 const express = require('express');
 const cors = require('cors');
 const { Server } = require('socket.io');
-const { io: ioClient } = require('socket.io-client');
+const WebSocket = require('ws');
 const { requireEnv, requireNumberEnv } = require('../config/env');
 const { loginRateLimiter } = require('./rate-limiters/loginRateLimiter');
 
@@ -11,6 +11,7 @@ const PORT = requireNumberEnv('GATEWAY_PORT');
 const MEETING_SERVICE_URL = requireEnv('MEETING_SERVICE_URL');
 const AUTH_SERVICE_URL = requireEnv('AUTH_SERVICE_URL');
 const FRONTEND_ORIGIN = requireEnv('FRONTEND_ORIGIN');
+const AI_SERVICE_WS_URL = process.env.AI_SERVICE_WS_URL || 'ws://localhost:8000/asr';
 
 const app = express();
 app.use(
@@ -57,6 +58,95 @@ const getCookieFromSetCookie = (setCookieHeader, name) => {
   }
 
   return '';
+};
+
+const toBinaryBuffer = (payload) => {
+  if (!payload) return null;
+  if (Buffer.isBuffer(payload)) return payload;
+  if (payload instanceof ArrayBuffer) return Buffer.from(payload);
+  if (ArrayBuffer.isView(payload)) {
+    return Buffer.from(payload.buffer, payload.byteOffset, payload.byteLength);
+  }
+  if (payload && typeof payload === 'object' && payload.type === 'Buffer' && Array.isArray(payload.data)) {
+    return Buffer.from(payload.data);
+  }
+  return null;
+};
+
+const verifySocketUser = ({ bearerToken, cookieHeader }) =>
+  new Promise((resolve, reject) => {
+    const targetUrl = new URL('/verify', AUTH_SERVICE_URL);
+    const client = targetUrl.protocol === 'https:' ? https : http;
+
+    const proxyReq = client.request(
+      targetUrl,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: bearerToken ? `Bearer ${bearerToken}` : '',
+          Cookie: cookieHeader,
+        },
+      },
+      (proxyRes) => {
+        let data = '';
+        proxyRes.on('data', (chunk) => {
+          data += chunk;
+        });
+        proxyRes.on('end', () => {
+          if (proxyRes.statusCode !== 200) {
+            reject(new Error('Unauthorized'));
+            return;
+          }
+
+          try {
+            const parsed = JSON.parse(data || '{}');
+            const user = parsed?.user || null;
+            if (!user?.id) {
+              reject(new Error('Unauthorized'));
+              return;
+            }
+            resolve(user);
+          } catch (_error) {
+            reject(new Error('Unauthorized'));
+          }
+        });
+      },
+    );
+
+    proxyReq.on('error', () => reject(new Error('Unauthorized')));
+    proxyReq.end();
+  });
+
+const ensureMeetingOwnership = ({ meetingId, userId, authToken }) =>
+  new Promise((resolve) => {
+    const targetUrl = new URL(`/meetings/${encodeURIComponent(meetingId)}`, MEETING_SERVICE_URL);
+    const client = targetUrl.protocol === 'https:' ? https : http;
+
+    const proxyReq = client.request(
+      targetUrl,
+      {
+        method: 'GET',
+        headers: {
+          Accept: 'application/json',
+          Authorization: authToken ? `Bearer ${authToken}` : '',
+          'x-user-id': String(userId),
+        },
+      },
+      (proxyRes) => {
+        proxyRes.resume();
+        resolve(proxyRes.statusCode === 200);
+      },
+    );
+
+    proxyReq.on('error', () => resolve(false));
+    proxyReq.end();
+  });
+
+const buildAiWsUrl = ({ userId, meetingId }) => {
+  const target = new URL(AI_SERVICE_WS_URL);
+  target.searchParams.set('user_id', String(userId));
+  target.searchParams.set('meeting_id', String(meetingId));
+  return target.toString();
 };
 
 app.get('/health', (_req, res) => {
@@ -135,6 +225,7 @@ const verifyAccess = (req, res, next) => {
     if (setCookieHeader) {
       res.set('set-cookie', setCookieHeader);
     }
+
     if (accessToken) {
       req.authToken = accessToken;
     } else {
@@ -142,6 +233,7 @@ const verifyAccess = (req, res, next) => {
         ? authHeader.slice(7)
         : accessCookieToken;
     }
+
     req.authUser = user;
     return next();
   };
@@ -363,7 +455,9 @@ app.post('/profile', (req, res) => {
     },
     (proxyRes) => {
       let data = '';
-      proxyRes.on('data', (chunk) => { data += chunk; });
+      proxyRes.on('data', (chunk) => {
+        data += chunk;
+      });
       proxyRes.on('end', () => {
         res
           .status(proxyRes.statusCode || 200)
@@ -399,6 +493,10 @@ app.post('/meetings/:meetingId/messages', (req, res) =>
   proxyMeetingService('POST', `/meetings/${encodeURIComponent(req.params.meetingId)}/messages`, req, res),
 );
 
+app.patch('/meetings/:meetingId/transcript', (req, res) =>
+  proxyMeetingService('PATCH', `/meetings/${encodeURIComponent(req.params.meetingId)}/transcript`, req, res),
+);
+
 app.post('/meetings/:meetingId/complete', (req, res) =>
   proxyMeetingService('POST', `/meetings/${encodeURIComponent(req.params.meetingId)}/complete`, req, res),
 );
@@ -412,7 +510,7 @@ app.delete('/meetings/:meetingId', (req, res) =>
 );
 
 // ---------------------------------------------------------------------------
-// Socket.io — relay audio chunks to meeting service
+// Socket.io — bridge browser PCM stream to AI websocket service
 // ---------------------------------------------------------------------------
 
 const server = http.createServer(app);
@@ -424,100 +522,206 @@ const io = new Server(server, {
   },
 });
 
-const normalizeMeta = (meta) => {
-  if (!meta || typeof meta !== 'object') return null;
-  const chunkIndex = Number(meta.chunkIndex);
-  const durationMs = Number(meta.durationMs);
-  const mimeType = typeof meta.mimeType === 'string' ? meta.mimeType : '';
-  if (!Number.isFinite(chunkIndex) || !Number.isFinite(durationMs)) return null;
-  if (!mimeType) return null;
-  return { chunkIndex, durationMs, mimeType };
-};
-
-const isBinaryPayload = (payload) =>
-  payload instanceof ArrayBuffer ||
-  ArrayBuffer.isView(payload) ||
-  (payload && typeof payload === 'object' && payload.type === 'Buffer');
-
 io.use((socket, next) => {
   const token = socket.handshake.auth?.token || '';
   const cookieHeader = socket.handshake.headers?.cookie || '';
   const accessCookieToken = getCookieValue(cookieHeader, 'meetai_access');
   const bearerToken = token || accessCookieToken;
+
   if (!bearerToken) {
     return next(new Error('Unauthorized'));
   }
 
-  const targetUrl = new URL('/verify', AUTH_SERVICE_URL);
-  const client = targetUrl.protocol === 'https:' ? https : http;
-  const proxyReq = client.request(
-    targetUrl,
-    {
-      method: 'POST',
-      headers: {
-        Authorization: bearerToken ? `Bearer ${bearerToken}` : '',
-        Cookie: cookieHeader,
-      },
-    },
-    (proxyRes) => {
-      if (proxyRes.statusCode !== 200) {
-        return next(new Error('Unauthorized'));
-      }
+  return verifySocketUser({ bearerToken, cookieHeader })
+    .then((user) => {
+      socket.data.authUser = user;
+      socket.data.authToken = bearerToken;
       return next();
-    },
-  );
-
-  proxyReq.on('error', () => next(new Error('Unauthorized')));
-  proxyReq.end();
+    })
+    .catch(() => next(new Error('Unauthorized')));
 });
 
 io.on('connection', (socket) => {
   console.log('[gateway] client connected', socket.id);
 
-  const meetingSocket = ioClient(MEETING_SERVICE_URL, {
-    transports: ['websocket'],
-  });
+  let aiSocket = null;
+  let activeMeetingId = null;
+  let didEmitEnded = false;
 
-  let lastChunkAt = 0;
+  const emitSessionEnded = (payload = {}) => {
+    if (!activeMeetingId || didEmitEnded) {
+      return;
+    }
+    didEmitEnded = true;
+    socket.emit('meeting-session-ended', {
+      meetingId: Number(activeMeetingId),
+      ...payload,
+    });
+  };
 
-  meetingSocket.on('connect', () => {
-    console.log('[gateway] connected to meeting service');
-  });
-
-  meetingSocket.on('connect_error', (error) => {
-    console.error('[gateway] meeting service connection error', error);
-  });
-
-  meetingSocket.on('meeting-audio-processed', (payload) => {
-    console.log('[gateway] relaying response', payload);
-    socket.emit('meeting-audio-processed', payload);
-  });
-
-  socket.on('meeting-audio-chunk', (meta, payload) => {
-    const now = Date.now();
-    if (now - lastChunkAt < 8000) {
-      console.warn('[gateway] rate limit exceeded');
-      socket.emit('meeting-audio-processed', 'rate limit exceeded');
+  const cleanupAiSocket = () => {
+    if (!aiSocket) {
       return;
     }
 
-    const normalizedMeta = normalizeMeta(meta);
+    try {
+      aiSocket.removeAllListeners();
+    } catch {
+      // ignore
+    }
 
-    if (!normalizedMeta || !isBinaryPayload(payload)) {
-      const payloadType = payload?.constructor?.name || typeof payload;
-      console.warn('[gateway] invalid payload shape', { meta, payloadType });
-      socket.emit('meeting-audio-processed', 'invalid payload');
+    try {
+      aiSocket.close();
+    } catch {
+      // ignore
+    }
+
+    aiSocket = null;
+  };
+
+  socket.on('meeting-session-start', async (payload) => {
+    if (aiSocket && aiSocket.readyState !== WebSocket.CLOSED) {
+      socket.emit('meeting-session-error', { message: 'AI session is already active.' });
       return;
     }
 
-    lastChunkAt = now;
-    console.log('[gateway] forwarding chunk', normalizedMeta.chunkIndex, normalizedMeta.durationMs);
-    meetingSocket.emit('meeting-audio-chunk', normalizedMeta, payload);
+    const meetingId = Number(payload?.meetingId);
+    const userId = Number(socket.data.authUser?.id);
+    const authToken = String(socket.data.authToken || '');
+
+    if (!Number.isFinite(meetingId) || meetingId <= 0) {
+      socket.emit('meeting-session-error', { message: 'Invalid meeting id.' });
+      return;
+    }
+
+    if (!Number.isFinite(userId) || userId <= 0) {
+      socket.emit('meeting-session-error', { message: 'Unauthorized user context.' });
+      return;
+    }
+
+    const ownsMeeting = await ensureMeetingOwnership({ meetingId, userId, authToken });
+    if (!ownsMeeting) {
+      socket.emit('meeting-session-error', { message: 'Meeting not found or not owned by user.' });
+      return;
+    }
+
+    const wsUrl = buildAiWsUrl({ userId, meetingId });
+    const ws = new WebSocket(wsUrl);
+
+    aiSocket = ws;
+    activeMeetingId = meetingId;
+    didEmitEnded = false;
+
+    ws.on('open', () => {
+      console.log('[gateway] connected to ai service', { socketId: socket.id, meetingId });
+    });
+
+    ws.on('message', (raw) => {
+      const textPayload = Buffer.isBuffer(raw) ? raw.toString('utf-8') : String(raw || '');
+
+      let parsed;
+      try {
+        parsed = JSON.parse(textPayload || '{}');
+      } catch (_error) {
+        socket.emit('meeting-session-error', { message: 'Received malformed AI payload.' });
+        return;
+      }
+
+      if (parsed?.type === 'config') {
+        socket.emit('meeting-session-ready', {
+          meetingId,
+          aiSessionId: parsed.session_id || '',
+          sampleRate: Number(parsed.sample_rate) || 16000,
+          encoding: parsed.encoding || 's16le',
+          channels: Number(parsed.channels) || 1,
+        });
+        return;
+      }
+
+      if (parsed?.type === 'ready_to_stop') {
+        emitSessionEnded();
+        cleanupAiSocket();
+        aiSocket = null;
+        activeMeetingId = null;
+        return;
+      }
+
+      socket.emit('meeting-transcript-update', {
+        meetingId,
+        aiSessionId: parsed?.session_id || '',
+        ...parsed,
+      });
+    });
+
+    ws.on('error', (error) => {
+      socket.emit('meeting-session-error', {
+        message: 'AI service connection failed.',
+        detail: error?.message || '',
+      });
+    });
+
+    ws.on('close', (code, reasonBuffer) => {
+      const reason = Buffer.isBuffer(reasonBuffer)
+        ? reasonBuffer.toString('utf-8')
+        : String(reasonBuffer || '');
+      emitSessionEnded({ code, reason });
+      cleanupAiSocket();
+      aiSocket = null;
+      activeMeetingId = null;
+    });
+  });
+
+  socket.on('meeting-audio-pcm', (payload) => {
+    if (!aiSocket || aiSocket.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    const binaryPayload = toBinaryBuffer(payload);
+    if (!binaryPayload || binaryPayload.length === 0) {
+      return;
+    }
+
+    aiSocket.send(binaryPayload, { binary: true }, (error) => {
+      if (!error) {
+        return;
+      }
+      socket.emit('meeting-session-error', {
+        message: 'Failed to send audio chunk to AI service.',
+        detail: error.message,
+      });
+    });
+  });
+
+  socket.on('meeting-session-stop', () => {
+    if (!aiSocket) {
+      emitSessionEnded();
+      return;
+    }
+
+    if (aiSocket.readyState !== WebSocket.OPEN) {
+      cleanupAiSocket();
+      emitSessionEnded();
+      aiSocket = null;
+      activeMeetingId = null;
+      return;
+    }
+
+    aiSocket.send(Buffer.alloc(0), { binary: true }, (error) => {
+      if (!error) {
+        return;
+      }
+      socket.emit('meeting-session-error', {
+        message: 'Failed to stop AI session cleanly.',
+        detail: error.message,
+      });
+    });
   });
 
   socket.on('disconnect', () => {
     console.log('[gateway] client disconnected', socket.id);
-    meetingSocket.disconnect();
+    cleanupAiSocket();
+    aiSocket = null;
+    activeMeetingId = null;
   });
 });
 
