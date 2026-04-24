@@ -1,0 +1,48 @@
+name: meetai
+
+x-app-build: &app-build
+  context: ..
+  dockerfile: deploy/Dockerfile
+
+x-common-env: &common-env
+  REDIS_URL: redis://redis:6379/0
+  NUM_WORKERS: ${NUM_WORKERS:-1}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  gateway:
+    build: *app-build
+    command: ["python3", "-m", "src.app.server"]
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      HOST: 0.0.0.0
+      PORT: 8000
+    ports:
+      - "${GATEWAY_PORT:-8000}:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  worker:
+    build: *app-build
+    command: ["python3", "-m", "src.app.worker"]
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      WORKER_ID: ${WORKER_ID:-0}
+    depends_on:
+      redis:
+        condition: service_healthy
