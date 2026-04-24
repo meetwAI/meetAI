@@ -13,6 +13,7 @@ const {
   REFRESH_TTL_SECONDS,
 } = require('../services/tokenService');
 const { hashPassword, verifyPassword, isPasswordHash } = require('../services/passwordService');
+const { fetchCalendarEvents } = require('../services/googleCalendarService');
 
 const router = express.Router();
 
@@ -66,6 +67,7 @@ const buildUser = (user) => ({
 const normalizeText = (value) => String(value || '').trim();
 const isDevelopment = process.env.NODE_ENV !== 'production';
 const FRONTEND_ORIGIN = normalizeText(process.env.FRONTEND_ORIGIN) || '';
+const GOOGLE_CALENDAR_READ_SCOPE = 'https://www.googleapis.com/auth/calendar.readonly';
 
 const devError = (error) => {
   if (!isDevelopment || !error) {
@@ -111,6 +113,37 @@ const getUserByGoogleId = async (googleId) => {
     [googleId],
   );
   return result.rows[0] || null;
+};
+
+const getGoogleCalendarTokensByUserId = async (userId) => {
+  const result = await query(
+    `SELECT id, google_refresh_token
+     FROM users
+     WHERE id = $1
+     LIMIT 1`,
+    [userId],
+  );
+  return result.rows[0] || null;
+};
+
+const estimateGoogleAccessTokenExpiry = () => new Date(Date.now() + 55 * 60 * 1000);
+
+const persistGoogleTokensForUser = async ({ userId, accessToken, refreshToken, accessTokenExpiry }) => {
+  if (!userId) {
+    return;
+  }
+
+  const normalizedAccessToken = normalizeText(accessToken) || null;
+  const normalizedRefreshToken = normalizeText(refreshToken) || null;
+
+  await query(
+    `UPDATE users
+     SET google_access_token = COALESCE($1, google_access_token),
+         google_refresh_token = COALESCE($2, google_refresh_token),
+         google_token_expiry = COALESCE($3, google_token_expiry)
+     WHERE id = $4`,
+    [normalizedAccessToken, normalizedRefreshToken, accessTokenExpiry || null, userId],
+  );
 };
 
 const sanitizeUsernameBase = (value) =>
@@ -247,9 +280,15 @@ const ensureGoogleStrategy = () => {
         clientSecret: config.clientSecret,
         callbackURL: config.callbackURL,
       },
-      async (_accessToken, _refreshToken, profile, done) => {
+      async (accessToken, refreshToken, profile, done) => {
         try {
           const user = await findOrCreateGoogleUser(profile);
+          await persistGoogleTokensForUser({
+            userId: user.id,
+            accessToken,
+            refreshToken,
+            accessTokenExpiry: normalizeText(accessToken) ? estimateGoogleAccessTokenExpiry() : null,
+          });
           return done(null, user);
         } catch (error) {
           return done(error);
@@ -475,11 +514,124 @@ router.post('/profile', async (req, res) => {
   }
 });
 
+router.get('/calendar/events', async (req, res) => {
+  const userId = Number(req.headers['x-user-id']);
+  if (!Number.isFinite(userId) || userId <= 0) {
+    return res.status(401).json({ message: 'Unauthorized' });
+  }
+
+  const timeMinRaw = normalizeText(req.query?.timeMin);
+  const timeMaxRaw = normalizeText(req.query?.timeMax);
+  const maxResultsRaw = normalizeText(req.query?.maxResults);
+
+  const parseIsoDate = (value, label) => {
+    if (!value) return null;
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      const error = new Error(`Invalid ${label}. Use an ISO-8601 timestamp.`);
+      error.statusCode = 400;
+      throw error;
+    }
+    return parsed.toISOString();
+  };
+
+  let timeMin;
+  let timeMax;
+
+  try {
+    timeMin = parseIsoDate(timeMinRaw, 'timeMin');
+    timeMax = parseIsoDate(timeMaxRaw, 'timeMax');
+  } catch (error) {
+    return res.status(error.statusCode || 400).json({ message: error.message || 'Invalid date range.' });
+  }
+
+  if (timeMin && timeMax && new Date(timeMin).getTime() > new Date(timeMax).getTime()) {
+    return res.status(400).json({ message: 'timeMin must be less than or equal to timeMax.' });
+  }
+
+  let maxResults = 25;
+  if (maxResultsRaw) {
+    const parsed = Number(maxResultsRaw);
+    if (!Number.isInteger(parsed) || parsed < 1 || parsed > 250) {
+      return res.status(400).json({ message: 'maxResults must be an integer between 1 and 250.' });
+    }
+    maxResults = parsed;
+  }
+
+  try {
+    const user = await getGoogleCalendarTokensByUserId(userId);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+
+    if (!normalizeText(user.google_refresh_token)) {
+      return res.status(401).json({ message: 'Google Calendar is not connected.' });
+    }
+
+    const calendarResult = await fetchCalendarEvents({
+      refreshToken: user.google_refresh_token,
+      timeMin,
+      timeMax,
+      maxResults,
+    });
+
+    await query(
+      `UPDATE users
+       SET google_access_token = $1,
+           google_token_expiry = $2
+       WHERE id = $3`,
+      [calendarResult.accessToken, calendarResult.accessTokenExpiry, userId],
+    );
+
+    return res.json({
+      events: calendarResult.events,
+      nextPageToken: calendarResult.nextPageToken || null,
+    });
+  } catch (error) {
+    if (error?.code === 'google-refresh-invalid' || error?.code === 'google-not-connected') {
+      try {
+        await query(
+          `UPDATE users
+           SET google_refresh_token = NULL,
+               google_access_token = NULL,
+               google_token_expiry = NULL
+           WHERE id = $1`,
+          [userId],
+        );
+      } catch (_clearTokenError) {
+        // Token cleanup failure should not mask the intended auth response.
+      }
+      return res.status(401).json({ message: 'Google Calendar is not connected.' });
+    }
+
+    if (error?.statusCode === 502) {
+      return res.status(502).json({ message: 'Google Calendar provider unavailable.' });
+    }
+
+    if (error?.statusCode === 400) {
+      return res.status(400).json({ message: error.message || 'Invalid calendar query.' });
+    }
+
+    console.error('[auth-service] calendar events fetch failed', {
+      userId,
+      code: error?.code,
+      statusCode: error?.statusCode,
+      message: error?.message,
+    });
+    return res.status(500).json({
+      message: 'Unable to fetch Google Calendar events.',
+      error: devError(error),
+    });
+  }
+});
+
 // Google OAuth
 router.get('/auth/google', (req, res, next) => {
   if (!ensureGoogleConfigured(res)) return undefined;
   return passport.authenticate('google', {
-    scope: ['profile', 'email'],
+    scope: ['profile', 'email', GOOGLE_CALENDAR_READ_SCOPE],
+    accessType: 'offline',
+    prompt: 'consent',
     session: false,
     state: true,
   })(req, res, next);
