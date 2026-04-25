@@ -3,12 +3,17 @@ FROM nvidia/cuda:12.3.2-runtime-ubuntu22.04
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-pip python3-venv \
+    git build-essential ffmpeg libsndfile1 \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
-COPY requirements.txt /app/requirements.txt
-RUN pip3 install --no-cache-dir -r /app/requirements.txt
+WORKDIR /workspace/src
+COPY requirements.txt /workspace/src/requirements.txt
+RUN pip3 install --no-cache-dir --upgrade pip setuptools wheel \
+    && pip3 install --no-cache-dir -r /workspace/src/requirements.txt
 
-COPY . /app
+COPY . /workspace/src
+
+# Keep the package parent on sys.path so `python -m src...` works.
+ENV PYTHONPATH=/workspace
 
 CMD ["python3", "-m", "src.app.server"]
