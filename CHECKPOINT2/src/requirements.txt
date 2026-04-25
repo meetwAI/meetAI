@@ -8,4 +8,4 @@ faster-whisper==1.1.1
 pydantic==2.10.6
 pydantic-settings==2.7.1
 requests==2.32.3
-nemo-toolkit[asr]
+nemo_toolkit[asr] @ git+https://github.com/NVIDIA/NeMo.git@main
