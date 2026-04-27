@@ -177,7 +177,6 @@ const fetchCalendarEvents = async ({ refreshToken, timeMin, timeMax, maxResults 
 
   return {
     ...eventsResult,
-    accessToken: refreshed.accessToken,
     accessTokenExpiry: refreshed.accessTokenExpiry,
   };
 };

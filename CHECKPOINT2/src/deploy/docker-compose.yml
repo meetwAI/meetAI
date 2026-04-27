@@ -1,11 +1,11 @@
-name: meetai
+﻿name: meetai
 
 x-app-build: &app-build
   context: ..
   dockerfile: deploy/Dockerfile
 
 x-common-env: &common-env
-  REDIS_URL: redis://redis:6379/0
+  REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
   NUM_WORKERS: ${NUM_WORKERS:-1}
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
 
@@ -46,3 +46,4 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+

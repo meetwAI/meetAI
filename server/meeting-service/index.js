@@ -39,6 +39,11 @@ app.post('/meetings', (req, res) => {
     participants,
     actionItems: [],
     messages: [],
+    asrStatus: 'idle',
+    lines: [],
+    bufferTranscription: '',
+    bufferDiarization: '',
+    updatedAt: startedAt.toISOString(),
   };
 
   return query(
@@ -66,19 +71,91 @@ app.get('/meetings/dummy', (req, res) => {
     return;
   }
 
+  const rawFilter = String(req.query.filter || 'previous').trim().toLowerCase();
+  const filter = ['upcoming', 'previous', 'all'].includes(rawFilter) ? rawFilter : null;
+  if (!filter) {
+    return res.status(400).json({ message: "filter must be one of: 'upcoming', 'previous', 'all'." });
+  }
+
+  const parseDateInput = (value, label) => {
+    const normalized = String(value || '').trim();
+    if (!normalized) {
+      return null;
+    }
+
+    const parsed = new Date(normalized);
+    if (Number.isNaN(parsed.getTime())) {
+      const error = new Error(`Invalid ${label}. Use an ISO-8601 date or timestamp.`);
+      error.statusCode = 400;
+      throw error;
+    }
+
+    return parsed;
+  };
+
+  let fromDate;
+  let toDate;
+  try {
+    fromDate = parseDateInput(req.query.from, 'from');
+    toDate = parseDateInput(req.query.to, 'to');
+  } catch (error) {
+    return res.status(error.statusCode || 400).json({ message: error.message || 'Invalid date range.' });
+  }
+
+  if (fromDate && toDate && fromDate.getTime() > toDate.getTime()) {
+    return res.status(400).json({ message: 'from must be less than or equal to to.' });
+  }
+
+  const rawLimit = Number(req.query.limit);
+  const limit = Number.isInteger(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 100) : 25;
+
+  const whereClauses = ['user_id = $1'];
+  const values = [userId];
+  let nextParamIndex = 2;
+
+  if (filter === 'upcoming') {
+    whereClauses.push('COALESCE(start_time, date) >= NOW()');
+  }
+
+  if (filter === 'previous') {
+    whereClauses.push('COALESCE(end_time, start_time, date) < NOW()');
+  }
+
+  if (fromDate) {
+    whereClauses.push(`COALESCE(start_time, date) >= $${nextParamIndex}`);
+    values.push(fromDate.toISOString());
+    nextParamIndex += 1;
+  }
+
+  if (toDate) {
+    whereClauses.push(`COALESCE(start_time, date) <= $${nextParamIndex}`);
+    values.push(toDate.toISOString());
+    nextParamIndex += 1;
+  }
+
+  const orderDirection = filter === 'upcoming' ? 'ASC' : 'DESC';
+  values.push(limit);
+
   return query(
     `SELECT
       id,
       COALESCE(full_transcript->>'title', CONCAT('Meeting ', id::text)) AS title,
-      TO_CHAR(date, 'Mon DD, YYYY') AS date,
+      TO_CHAR(COALESCE(start_time, date), 'Mon DD, YYYY') AS date,
       COALESCE(summarisation, '') AS summary,
       COALESCE(full_transcript->'participants', '[]'::jsonb) AS participants,
-      COALESCE(full_transcript->'messages', '[]'::jsonb) AS messages
+      COALESCE(full_transcript->'messages', '[]'::jsonb) AS messages,
+      COALESCE(full_transcript->'lines', '[]'::jsonb) AS lines,
+      COALESCE(full_transcript->>'bufferTranscription', '') AS buffer_transcription,
+      COALESCE(full_transcript->>'bufferDiarization', '') AS buffer_diarization,
+      COALESCE(full_transcript->>'asrStatus', 'idle') AS asr_status,
+      COALESCE(full_transcript->>'updatedAt', '') AS updated_at,
+      start_time,
+      end_time
     FROM meetings
-    WHERE user_id = $1
-    ORDER BY date DESC
-    LIMIT 25`,
-    [userId],
+    WHERE ${whereClauses.join(' AND ')}
+    ORDER BY COALESCE(start_time, date) ${orderDirection}
+    LIMIT $${nextParamIndex}`,
+    values,
   )
     .then((result) => {
       const meetings = result.rows.map((row) => ({
@@ -88,6 +165,13 @@ app.get('/meetings/dummy', (req, res) => {
         summary: row.summary,
         participants: Array.isArray(row.participants) ? row.participants : [],
         messages: Array.isArray(row.messages) ? row.messages : [],
+        lines: Array.isArray(row.lines) ? row.lines : [],
+        bufferTranscription: String(row.buffer_transcription || ''),
+        bufferDiarization: String(row.buffer_diarization || ''),
+        asrStatus: String(row.asr_status || 'idle'),
+        updatedAt: String(row.updated_at || ''),
+        startTime: row.start_time,
+        endTime: row.end_time,
       }));
       return res.json(meetings);
     })
@@ -162,6 +246,11 @@ app.get('/meetings/:meetingId', (req, res) => {
       COALESCE(full_transcript->'participants', '[]'::jsonb) AS participants,
       COALESCE(full_transcript->'messages', '[]'::jsonb) AS messages,
       COALESCE(full_transcript->'actionItems', '[]'::jsonb) AS action_items,
+      COALESCE(full_transcript->'lines', '[]'::jsonb) AS lines,
+      COALESCE(full_transcript->>'bufferTranscription', '') AS buffer_transcription,
+      COALESCE(full_transcript->>'bufferDiarization', '') AS buffer_diarization,
+      COALESCE(full_transcript->>'asrStatus', 'idle') AS asr_status,
+      COALESCE(full_transcript->>'updatedAt', '') AS updated_at,
       COALESCE(duration_minutes, 0) AS duration_minutes,
       start_time,
       end_time
@@ -184,6 +273,11 @@ app.get('/meetings/:meetingId', (req, res) => {
         participants: Array.isArray(row.participants) ? row.participants : [],
         messages: Array.isArray(row.messages) ? row.messages : [],
         actionItems: Array.isArray(row.action_items) ? row.action_items : [],
+        lines: Array.isArray(row.lines) ? row.lines : [],
+        bufferTranscription: String(row.buffer_transcription || ''),
+        bufferDiarization: String(row.buffer_diarization || ''),
+        asrStatus: String(row.asr_status || 'idle'),
+        updatedAt: String(row.updated_at || ''),
         durationMinutes: Number(row.duration_minutes) || 0,
         startTime: row.start_time,
         endTime: row.end_time,
