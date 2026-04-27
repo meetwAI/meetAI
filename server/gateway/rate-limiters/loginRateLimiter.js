@@ -1,15 +1,8 @@
-const { createClient } = require('redis');
-const { requireEnv } = require('../../config/env');
+const { getRedisClient, ensureRedisReady } = require('../../config/redis');
 
-const REDIS_URL = requireEnv('REDIS_URL');
-const redisClient = createClient({ url: REDIS_URL });
-
-redisClient.on('error', (error) => {
-  console.error('[gateway] redis error', error);
-});
-
-redisClient.connect().catch((error) => {
-  console.error('[gateway] redis connection error', error);
+const redisClient = getRedisClient({
+  cacheKey: 'gateway',
+  serviceName: 'gateway',
 });
 
 const loginRateLimiter = async (req, res, next) => {
@@ -22,11 +15,7 @@ const loginRateLimiter = async (req, res, next) => {
   const rateLimitKey = `auth:login:${normalizedUsername}`;
 
   try {
-    if (redisClient && !redisClient.isOpen) {
-      await redisClient.connect();
-    }
-
-    const redisReady = Boolean(redisClient?.isReady || redisClient?.isOpen);
+    const redisReady = await ensureRedisReady(redisClient, 'gateway');
     if (!redisReady) {
       console.warn('[gateway] redis not ready; skipping login rate limit');
       return next();

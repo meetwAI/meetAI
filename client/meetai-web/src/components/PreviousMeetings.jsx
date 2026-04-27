@@ -11,10 +11,80 @@ import {
   togglePreviousMeetingsSidebar,
 } from '../globals';
 
+const normalizeTranscriptText = (value) => String(value || '').trim().replace(/\s+/g, ' ');
+
+const mergeTranscriptText = (baseText, nextText) => {
+  const base = normalizeTranscriptText(baseText);
+  const next = normalizeTranscriptText(nextText);
+
+  if (!base) return next;
+  if (!next) return base;
+  if (base === next) return base;
+  if (next.startsWith(base)) return next;
+  if (base.startsWith(next)) return base;
+
+  const baseWords = base.split(' ');
+  const nextWords = next.split(' ');
+  const maxOverlap = Math.min(baseWords.length, nextWords.length);
+  let overlap = 0;
+
+  for (let i = 1; i <= maxOverlap; i += 1) {
+    const baseSlice = baseWords.slice(baseWords.length - i).join(' ');
+    const nextSlice = nextWords.slice(0, i).join(' ');
+    if (baseSlice === nextSlice) {
+      overlap = i;
+    }
+  }
+
+  if (overlap) {
+    return baseWords.concat(nextWords.slice(overlap)).join(' ');
+  }
+
+  return `${base} ${next}`.trim();
+};
+
+const trimTranscriptContinuation = (previousText, nextText) => {
+  const base = normalizeTranscriptText(previousText);
+  const next = normalizeTranscriptText(nextText);
+
+  if (!next) return '';
+  if (!base) return next;
+  if (next === base) return '';
+  if (base.startsWith(next)) return '';
+  if (next.startsWith(base)) {
+    return next.slice(base.length).trimStart();
+  }
+
+  const baseWords = base.split(' ');
+  const nextWords = next.split(' ');
+  const maxOverlap = Math.min(baseWords.length, nextWords.length);
+  let overlap = 0;
+
+  for (let i = 1; i <= maxOverlap; i += 1) {
+    const baseSlice = baseWords.slice(baseWords.length - i).join(' ');
+    const nextSlice = nextWords.slice(0, i).join(' ');
+    if (baseSlice === nextSlice) {
+      overlap = i;
+    }
+  }
+
+  if (overlap) {
+    return nextWords.slice(overlap).join(' ').trim();
+  }
+
+  return next;
+};
+
 
 export default function PreviousMeetings() {
   useSignals();
+  const API_URL = import.meta.env.VITE_AUTH_URL || import.meta.env.VITE_API_URL;
   const [selectedId, setSelectedId] = useState(null);
+  const [meetingFilter, setMeetingFilter] = useState('previous');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+  const [calendarConnected, setCalendarConnected] = useState(false);
+  const [calendarStatusLoading, setCalendarStatusLoading] = useState(true);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [draftMessage, setDraftMessage] = useState('');
   const [isSending, setIsSending] = useState(false);
@@ -25,11 +95,25 @@ export default function PreviousMeetings() {
   const [showActionsMenu, setShowActionsMenu] = useState(false);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
+  const [isTranscriptPanelOpen, setIsTranscriptPanelOpen] = useState(true);
   const actionsMenuRef = useRef(null);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { meetingid } = useParams();
   const isSidebarOpen = sidebarState.value;
+
+  const meetingsQueryKey = ['meetings', 'dummy', meetingFilter, fromDate || null, toDate || null];
+  const meetingsQueryString = useMemo(() => {
+    const params = new URLSearchParams();
+    params.set('filter', meetingFilter);
+    if (fromDate) {
+      params.set('from', `${fromDate}T00:00:00.000Z`);
+    }
+    if (toDate) {
+      params.set('to', `${toDate}T23:59:59.999Z`);
+    }
+    return params.toString();
+  }, [meetingFilter, fromDate, toDate]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -53,27 +137,62 @@ export default function PreviousMeetings() {
     };
   }, []);
 
+  useEffect(() => {
+    let active = true;
+
+    const loadCalendarStatus = async () => {
+      setCalendarStatusLoading(true);
+      try {
+        const response = await fetchWithAuth('/calendar/status');
+        const payload = await response.json().catch(() => ({}));
+        if (active) {
+          setCalendarConnected(Boolean(payload?.connected));
+        }
+      } catch {
+        if (active) {
+          setCalendarConnected(false);
+        }
+      } finally {
+        if (active) {
+          setCalendarStatusLoading(false);
+        }
+      }
+    };
+
+    loadCalendarStatus();
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const {
     data: meetings = [],
     isLoading,
     error,
   } = useQuery({
-    queryKey: ['meetings', 'dummy'],
+    queryKey: meetingsQueryKey,
     queryFn: async () => {
-      const response = await fetchWithAuth('/meetings/dummy');
-
-      if (!response.ok) {
-        if (response.status === 401) {
+      try {
+        const response = await fetchWithAuth(`/meetings/dummy?${meetingsQueryString}`);
+        const data = await response.json();
+        return Array.isArray(data) ? data : [data];
+      } catch (fetchError) {
+        if (fetchError?.status === 401) {
           const authError = new Error('Unauthorized');
           authError.status = 401;
           throw authError;
         }
-        const payload = await response.json().catch(() => ({}));
-        throw new Error(payload?.message || 'Failed to load meetings');
-      }
 
-      const data = await response.json();
-      return Array.isArray(data) ? data : [data];
+        let errorMessage = 'Failed to load meetings';
+        if (fetchError?.response) {
+          const payload = await fetchError.response.json().catch(() => ({}));
+          if (payload?.message) {
+            errorMessage = payload.message;
+          }
+        }
+
+        throw new Error(errorMessage);
+      }
     },
     staleTime: 10_000,
   });
@@ -145,6 +264,11 @@ export default function PreviousMeetings() {
       participants: Array.isArray(meeting.participants) ? meeting.participants : [],
       messages: Array.isArray(meeting.messages) ? meeting.messages : [],
       actionItems: Array.isArray(meeting.actionItems) ? meeting.actionItems : [],
+      lines: Array.isArray(meeting.lines) ? meeting.lines : [],
+      bufferTranscription: String(meeting.bufferTranscription || ''),
+      bufferDiarization: String(meeting.bufferDiarization || ''),
+      asrStatus: String(meeting.asrStatus || 'idle'),
+      updatedAt: String(meeting.updatedAt || ''),
     }));
 
     if (!routeMeeting) {
@@ -159,6 +283,11 @@ export default function PreviousMeetings() {
       participants: Array.isArray(routeMeeting.participants) ? routeMeeting.participants : [],
       messages: Array.isArray(routeMeeting.messages) ? routeMeeting.messages : [],
       actionItems: Array.isArray(routeMeeting.actionItems) ? routeMeeting.actionItems : [],
+      lines: Array.isArray(routeMeeting.lines) ? routeMeeting.lines : [],
+      bufferTranscription: String(routeMeeting.bufferTranscription || ''),
+      bufferDiarization: String(routeMeeting.bufferDiarization || ''),
+      asrStatus: String(routeMeeting.asrStatus || 'idle'),
+      updatedAt: String(routeMeeting.updatedAt || ''),
     };
 
     const hasRouteMeeting = baseMeetings.some((meeting) => String(meeting.id) === String(routeNormalized.id));
@@ -170,6 +299,76 @@ export default function PreviousMeetings() {
     [normalizedMeetings, selectedId]
   );
 
+  const transcriptState = useMemo(() => {
+    if (!selectedMeeting) {
+      return {
+        groups: [],
+        bufferTranscription: '',
+        bufferDiarization: '',
+      };
+    }
+
+    let bufferTranscription = normalizeTranscriptText(selectedMeeting.bufferTranscription);
+    let bufferDiarization = normalizeTranscriptText(selectedMeeting.bufferDiarization);
+    const lines = Array.isArray(selectedMeeting.lines) ? selectedMeeting.lines : [];
+    const groups = [];
+    const lastTextBySpeaker = new Map();
+
+    lines.forEach((line) => {
+      const speakerValue = Number.isFinite(Number(line?.speaker))
+        ? Number(line.speaker)
+        : line?.speaker ?? null;
+      const text = normalizeTranscriptText(line?.text);
+      const previousText = lastTextBySpeaker.get(speakerValue) || '';
+      const trimmedText = trimTranscriptContinuation(previousText, text);
+
+      if (!trimmedText) {
+        if (text) {
+          lastTextBySpeaker.set(speakerValue, mergeTranscriptText(previousText, text));
+        }
+        return;
+      }
+
+      const lastGroup = groups[groups.length - 1];
+      if (!lastGroup || lastGroup.speaker !== speakerValue) {
+        groups.push({
+          speaker: speakerValue,
+          text: trimmedText,
+          start: line?.start ?? null,
+          end: line?.end ?? null,
+        });
+      } else {
+        lastGroup.text = mergeTranscriptText(lastGroup.text, text);
+        if (lastGroup.start == null && line?.start != null) {
+          lastGroup.start = line.start;
+        }
+        if (line?.end != null) {
+          lastGroup.end = line.end;
+        }
+      }
+
+      if (text) {
+        lastTextBySpeaker.set(speakerValue, mergeTranscriptText(previousText, text));
+      }
+    });
+
+    if (!groups.length && (bufferTranscription || bufferDiarization)) {
+      const bufferText = [bufferDiarization, bufferTranscription].filter(Boolean).join(' ');
+      if (bufferText) {
+        groups.push({
+          speaker: -1,
+          text: bufferText,
+          start: null,
+          end: null,
+        });
+        bufferTranscription = '';
+        bufferDiarization = '';
+      }
+    }
+
+    return { groups, bufferTranscription, bufferDiarization };
+  }, [selectedMeeting]);
+
   useEffect(() => {
     if (!selectedMeeting) {
       setTitleDraft('');
@@ -179,7 +378,7 @@ export default function PreviousMeetings() {
   }, [selectedMeeting]);
 
   const appendMessageToCache = useCallback((meetingId, message) => {
-    queryClient.setQueryData(['meetings', 'dummy'], (current) => {
+    queryClient.setQueriesData({ queryKey: ['meetings', 'dummy'] }, (current) => {
       const currentMeetings = Array.isArray(current) ? current : [];
       return currentMeetings.map((meeting) => {
         if (String(meeting.id) !== String(meetingId)) {
@@ -202,7 +401,7 @@ export default function PreviousMeetings() {
   }, [meetingid, queryClient]);
 
   const renameMeetingInCache = useCallback((meetingId, title) => {
-    queryClient.setQueryData(['meetings', 'dummy'], (current) => {
+    queryClient.setQueriesData({ queryKey: ['meetings', 'dummy'] }, (current) => {
       const currentMeetings = Array.isArray(current) ? current : [];
       return currentMeetings.map((meeting) => {
         if (String(meeting.id) !== String(meetingId)) {
@@ -269,7 +468,7 @@ export default function PreviousMeetings() {
     try {
       await fetchWithAuth(`/meetings/${meetingToDelete}`, { method: 'DELETE' });
 
-      queryClient.setQueryData(['meetings', 'dummy'], (current) => {
+      queryClient.setQueriesData({ queryKey: ['meetings', 'dummy'] }, (current) => {
         const currentMeetings = Array.isArray(current) ? current : [];
         return currentMeetings.filter((meeting) => String(meeting.id) !== String(meetingToDelete));
       });
@@ -328,12 +527,17 @@ export default function PreviousMeetings() {
     }
   }, [isRenaming, queryClient, renameMeetingInCache, selectedMeeting, titleDraft]);
 
+  const handleConnectCalendar = () => {
+    const connectBase = API_URL || 'localhost:5173';
+    window.location.href = `${connectBase}/auth/google/calendar`;
+  };
+
   return (
-    <div className={`previous-meetings${isSidebarOpen ? '' : ' sidebar-collapsed'}`}>
+    <div className={`previous-meetings${isSidebarOpen ? '' : ' sidebar-collapsed'}${isTranscriptPanelOpen ? '' : ' transcript-collapsed'}`}>
       <section className="meeting-list">
         <div className="meeting-list-header">
           <div className="meeting-list-header-row">
-            <h2>Previous Meetings</h2>
+            <h2>Meetings</h2>
             <button
               type="button"
               className={`sidebar-icon-button${isSidebarOpen ? '' : ' collapsed'}`}
@@ -348,7 +552,69 @@ export default function PreviousMeetings() {
               </svg>
             </button>
           </div>
-          <p>Click a meeting to review the recap and conversation.</p>
+          <p>Filter by upcoming, previous, or a custom date range.</p>
+
+          {!calendarStatusLoading && !calendarConnected && (
+            <div className="calendar-connect-banner">
+              <div>
+                <strong>Connect Google Calendar?</strong>
+                <span>Enable scheduling and follow-ups.</span>
+              </div>
+              <button type="button" onClick={handleConnectCalendar}>
+                Connect
+              </button>
+            </div>
+          )}
+
+          <div className="meeting-filter-row">
+            {!calendarStatusLoading && calendarConnected && (
+              <label className="meeting-filter-field">
+                <span>Show</span>
+                <select
+                  value={meetingFilter}
+                  onChange={(event) => setMeetingFilter(event.target.value)}
+                  aria-label="Filter meetings"
+                >
+                  <option value="previous">Previous</option>
+
+                  <option value="upcoming">Upcoming</option>
+
+                  <option value="all">All</option>
+                </select>
+              </label>
+            )}
+            <label className="meeting-filter-field">
+              <span>From</span>
+              <input
+                type="date"
+                value={fromDate}
+                onChange={(event) => setFromDate(event.target.value)}
+                aria-label="Meetings from date"
+              />
+            </label>
+
+            <label className="meeting-filter-field">
+              <span>To</span>
+              <input
+                type="date"
+                value={toDate}
+                onChange={(event) => setToDate(event.target.value)}
+                aria-label="Meetings to date"
+              />
+            </label>
+
+            <button
+              type="button"
+              className="meeting-filter-clear"
+              onClick={() => {
+                setFromDate('');
+                setToDate('');
+              }}
+              disabled={!fromDate && !toDate}
+            >
+              Clear range
+            </button>
+          </div>
         </div>
 
         {isLoading && <p>Loading meetings...</p>}
@@ -432,41 +698,52 @@ export default function PreviousMeetings() {
                     </span>
                   ))}
                 </div>
-                <div className="meeting-actions-menu-wrapper" ref={actionsMenuRef}>
+                <div className="meeting-header-actions-row">
                   <button
                     type="button"
-                    className="meeting-actions-trigger"
-                    aria-label="Open meeting actions"
-                    aria-expanded={showActionsMenu}
-                    onClick={() => setShowActionsMenu((prev) => !prev)}
+                    className={`meeting-transcript-toggle${isTranscriptPanelOpen ? ' is-open' : ''}`}
+                    onClick={() => setIsTranscriptPanelOpen((prev) => !prev)}
+                    aria-label={isTranscriptPanelOpen ? 'Hide transcript panel' : 'Open transcript panel'}
+                    aria-pressed={isTranscriptPanelOpen}
                   >
-                    <span aria-hidden="true">⋮</span>
+                    {isTranscriptPanelOpen ? 'Hide transcript' : 'Transcript'}
                   </button>
-                  {showActionsMenu && (
-                    <div className="meeting-actions-popup">
-                      <button
-                        type="button"
-                        className="rename-meeting-button"
-                        onClick={() => {
-                          setShowActionsMenu(false);
-                          setRenameError('');
-                          setTitleDraft(String(selectedMeeting.title || ''));
-                          setIsEditingTitle(true);
-                        }}
-                        disabled={isRenaming}
-                      >
-                        Rename meeting
-                      </button>
-                      <button
-                        type="button"
-                        className="delete-meeting-button"
-                        onClick={handleDeleteMeeting}
-                        disabled={isDeleting}
-                      >
-                        {isDeleting ? 'Deleting...' : 'Delete meeting'}
-                      </button>
-                    </div>
-                  )}
+                  <div className="meeting-actions-menu-wrapper" ref={actionsMenuRef}>
+                    <button
+                      type="button"
+                      className="meeting-actions-trigger"
+                      aria-label="Open meeting actions"
+                      aria-expanded={showActionsMenu}
+                      onClick={() => setShowActionsMenu((prev) => !prev)}
+                    >
+                      <span aria-hidden="true">⋮</span>
+                    </button>
+                    {showActionsMenu && (
+                      <div className="meeting-actions-popup">
+                        <button
+                          type="button"
+                          className="rename-meeting-button"
+                          onClick={() => {
+                            setShowActionsMenu(false);
+                            setRenameError('');
+                            setTitleDraft(String(selectedMeeting.title || ''));
+                            setIsEditingTitle(true);
+                          }}
+                          disabled={isRenaming}
+                        >
+                          Rename meeting
+                        </button>
+                        <button
+                          type="button"
+                          className="delete-meeting-button"
+                          onClick={handleDeleteMeeting}
+                          disabled={isDeleting}
+                        >
+                          {isDeleting ? 'Deleting...' : 'Delete meeting'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             </header>
@@ -516,7 +793,7 @@ export default function PreviousMeetings() {
                 <div className="attach-popup">
                   <button type="button">Upload file</button>
                   <button type="button">Add note</button>
-                  <button type="button">Schedule follow-up</button>
+                  {calendarConnected && <button type="button">Schedule follow-up</button>}
                 </div>
               )}
               <input
@@ -548,6 +825,78 @@ export default function PreviousMeetings() {
           </div>
         )}
       </section>
+
+      {isTranscriptPanelOpen ? (
+        <aside className="meeting-transcript-panel">
+          <div className="meeting-transcript-header">
+            <h3>Transcript</h3>
+            <button
+              type="button"
+              className="meeting-transcript-close"
+              onClick={() => setIsTranscriptPanelOpen(false)}
+              aria-label="Close transcript panel"
+            >
+              Close
+            </button>
+          </div>
+          {selectedMeeting ? (
+            <>
+              <div className="meeting-transcript-body">
+                {transcriptState.groups.map((group, groupIndex) => {
+                  const isLastGroup = groupIndex === transcriptState.groups.length - 1;
+                  const timeLabel =
+                    group?.start != null && group?.end != null ? `${group.start} - ${group.end}` : '';
+                  const speakerLabel =
+                    Number(group?.speaker) === -2
+                      ? 'Silence'
+                      : `Speaker ${Number.isFinite(Number(group?.speaker)) ? Number(group.speaker) : '-'}`;
+                  const showMeta = !(Number(group?.speaker) === -1 && !timeLabel);
+                  const bufferParts = [
+                    transcriptState.bufferDiarization,
+                    transcriptState.bufferTranscription,
+                  ].filter(Boolean);
+
+                  return (
+                    <article className="meeting-transcript-line" key={`speaker-${group.speaker}-${groupIndex}`}>
+                      {showMeta && (
+                        <div className="meeting-transcript-meta">
+                          <span>{speakerLabel}</span>
+                          {timeLabel && <span>{timeLabel}</span>}
+                        </div>
+                      )}
+                      <p>
+                        {group.text}
+                        {isLastGroup &&
+                          bufferParts.map((part, idx) => (
+                            <span className="meeting-transcript-buffer-inline" key={`buffer-${idx}`}>
+                              {(group.text || idx > 0) ? ' ' : ''}{part}
+                            </span>
+                          ))}
+                      </p>
+                    </article>
+                  );
+                })}
+                {!transcriptState.groups.length && (
+                  <p className="meeting-transcript-empty">No transcript yet.</p>
+                )}
+              </div>
+            </>
+          ) : (
+            <p className="meeting-transcript-empty">Select a meeting to view transcript.</p>
+          )}
+        </aside>
+      ) : (
+        !selectedMeeting && (
+          <button
+            type="button"
+            className="meeting-transcript-open"
+            onClick={() => setIsTranscriptPanelOpen(true)}
+            aria-label="Open transcript panel"
+          >
+            Transcript
+          </button>
+        )
+      )}
     </div>
   );
 }
