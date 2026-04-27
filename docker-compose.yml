@@ -19,7 +19,7 @@ services:
     env_file:
       - ./server/.env
     environment:
-      REDIS_URL: redis://redis:6379
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       DATABASE_URL: postgresql://meetai:meetai_pass@postgres:5432/meetai_dev
     ports:
       - "4020:4020"
@@ -98,7 +98,7 @@ services:
     environment:
       AUTH_SERVICE_URL: http://auth-service:4020
       MEETING_SERVICE_URL: http://meeting-service:4001
-      REDIS_URL: redis://redis:6379
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       AI_SERVICE_WS_URL: ws://ai-gateway:8000/asr
     ports:
       - "4010:4010"
@@ -140,7 +140,7 @@ services:
       dockerfile: deploy/Dockerfile
     command: python3 -m src.app.server
     environment:
-      REDIS_URL: redis://redis:6379/1
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       NUM_WORKERS: 1
       LOG_LEVEL: INFO
       HOST: 0.0.0.0
@@ -167,7 +167,7 @@ services:
       dockerfile: deploy/Dockerfile
     command: python3 -m src.app.worker
     environment:
-      REDIS_URL: redis://redis:6379/1
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       NUM_WORKERS: 1
       WORKER_ID: 0
       DIARIZATION_ENABLED: "true"
@@ -175,6 +175,7 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+    gpus: all
     restart: unless-stopped
 
   web:
@@ -216,7 +217,8 @@ services:
       - pgdata:/var/lib/postgresql/data
       - ./server/db/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
+      test:
+        ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 3s
       retries: 20

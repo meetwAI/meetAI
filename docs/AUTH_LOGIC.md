@@ -42,6 +42,11 @@ This document explains authentication in meetAI across gateway, auth-service, an
 6. Frontend should call `POST /verify` (or any protected API) to fetch the user profile and store `meetai_user` locally.
 7. Cookies must be set on the same host that the frontend uses for API calls (typically `http://localhost:4010` via gateway).
 
+OAuth security controls:
+
+- PKCE is enabled (`S256`) on the OAuth strategy.
+- `state` validation is enabled and required as part of the PKCE flow.
+
 ## Tokens and TTL
 
 Defined in `server/auth-service/services/tokenService.js`:

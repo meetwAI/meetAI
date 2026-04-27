@@ -1,8 +1,5 @@
 const express = require('express');
-const crypto = require('crypto');
 const passport = require('passport');
-const { Strategy: GoogleStrategy } = require('passport-google-oauth20');
-const { query } = require('../../db/client');
 const {
   issueTokens,
   verifyRefreshToken,
@@ -13,6 +10,27 @@ const {
   REFRESH_TTL_SECONDS,
 } = require('../services/tokenService');
 const { hashPassword, verifyPassword, isPasswordHash } = require('../services/passwordService');
+const { fetchCalendarEvents } = require('../services/googleCalendarService');
+const {
+  getUserByUsername,
+  getGoogleCalendarTokensByUserId,
+  createUser,
+  updateUserPassword,
+  updateUserProfile,
+  persistGoogleTokensForUser,
+  clearGoogleTokensForUser,
+} = require('../services/userService');
+const {
+  GOOGLE_LOGIN_SCOPES,
+  GOOGLE_CALENDAR_SCOPES,
+  GOOGLE_OAUTH_MODE_LOGIN,
+  GOOGLE_OAUTH_MODE_CALENDAR,
+  ensureGoogleConfigured,
+  setGoogleOauthSessionMode,
+  consumeGoogleOauthSessionMode,
+  estimateGoogleAccessTokenExpiry,
+} = require('../services/googleAuthService');
+const { decryptGoogleRefreshToken } = require('../services/googleSecretsService');
 
 const router = express.Router();
 
@@ -80,204 +98,6 @@ const devError = (error) => {
   };
 };
 
-const getUserByUsername = async (username) => {
-  const result = await query(
-    `SELECT id, name, username, password, email, google_id, avatar_url
-     FROM users
-     WHERE username = $1
-     LIMIT 1`,
-    [username],
-  );
-  return result.rows[0] || null;
-};
-
-const getUserByEmail = async (email) => {
-  const result = await query(
-    `SELECT id, name, username, password, email, google_id, avatar_url
-     FROM users
-     WHERE email = $1
-     LIMIT 1`,
-    [email],
-  );
-  return result.rows[0] || null;
-};
-
-const getUserByGoogleId = async (googleId) => {
-  const result = await query(
-    `SELECT id, name, username, password, email, google_id, avatar_url
-     FROM users
-     WHERE google_id = $1
-     LIMIT 1`,
-    [googleId],
-  );
-  return result.rows[0] || null;
-};
-
-const sanitizeUsernameBase = (value) =>
-  normalizeText(value)
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]/g, '')
-    .replace(/^[._-]+|[._-]+$/g, '');
-
-const generateUniqueUsername = async (email) => {
-  const localPart = String(email || '').split('@')[0] || 'user';
-  const baseCandidate = sanitizeUsernameBase(localPart);
-  const fallback = `user${crypto.randomBytes(3).toString('hex')}`;
-  const base = (baseCandidate && baseCandidate.length >= 3 ? baseCandidate : fallback).slice(0, 24);
-
-  if (!(await getUserByUsername(base))) {
-    return base;
-  }
-
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    const suffix = crypto.randomBytes(2).toString('hex');
-    const candidate = `${base}-${suffix}`;
-    if (!(await getUserByUsername(candidate))) {
-      return candidate;
-    }
-  }
-
-  throw new Error('unable-to-generate-unique-username');
-};
-
-const resolveGoogleProfileEmail = (profile) => {
-  const emails = Array.isArray(profile?.emails) ? profile.emails : [];
-  const verified = emails.find((entry) => entry?.verified);
-  return normalizeText(verified?.value || emails[0]?.value).toLowerCase();
-};
-
-const resolveGoogleProfileName = (profile) => {
-  const displayName = normalizeText(profile?.displayName);
-  if (displayName) return displayName;
-  const givenName = normalizeText(profile?.name?.givenName);
-  const familyName = normalizeText(profile?.name?.familyName);
-  return normalizeText([givenName, familyName].filter(Boolean).join(' '));
-};
-
-const resolveGoogleProfileAvatar = (profile) => {
-  const photos = Array.isArray(profile?.photos) ? profile.photos : [];
-  return normalizeText(photos[0]?.value);
-};
-
-const isAllowedGoogleDomain = (email, profile) => {
-  const allowedDomain = normalizeText(process.env.GOOGLE_ALLOWED_DOMAIN).toLowerCase();
-  if (!allowedDomain) return true;
-  const emailDomain = String(email || '').split('@')[1]?.toLowerCase() || '';
-  const hostedDomain = normalizeText(profile?._json?.hd).toLowerCase();
-  return emailDomain === allowedDomain || hostedDomain === allowedDomain;
-};
-
-const findOrCreateGoogleUser = async (profile) => {
-  const googleId = normalizeText(profile?.id);
-  if (googleId) {
-    const existingByGoogle = await getUserByGoogleId(googleId);
-    if (existingByGoogle) {
-      return existingByGoogle;
-    }
-  }
-
-  const email = resolveGoogleProfileEmail(profile);
-  if (!email) {
-    throw new Error('google-email-missing');
-  }
-  if (!isAllowedGoogleDomain(email, profile)) {
-    const error = new Error('google-domain-not-allowed');
-    error.code = 'google-domain-not-allowed';
-    throw error;
-  }
-
-  const existing = await getUserByEmail(email);
-  if (existing) {
-    const name = resolveGoogleProfileName(profile);
-    const avatarUrl = resolveGoogleProfileAvatar(profile);
-    const updates = [];
-    const values = [];
-    if (googleId && !existing.google_id) {
-      updates.push(`google_id = $${values.length + 1}`);
-      values.push(googleId);
-    }
-    if (avatarUrl && existing.avatar_url !== avatarUrl) {
-      updates.push(`avatar_url = $${values.length + 1}`);
-      values.push(avatarUrl);
-    }
-    if (updates.length) {
-      values.push(existing.id);
-      await query(`UPDATE users SET ${updates.join(', ')} WHERE id = $${values.length}`, values);
-      return {
-        ...existing,
-        name: existing.name,
-        google_id: googleId || existing.google_id,
-        avatar_url: avatarUrl || existing.avatar_url,
-      };
-    }
-    return existing;
-  }
-
-  const name = resolveGoogleProfileName(profile);
-  const username = await generateUniqueUsername(email);
-  const avatarUrl = resolveGoogleProfileAvatar(profile);
-  const user = await createUser({ name, email, username, passwordHash: null, googleId, avatarUrl });
-  if (!user) {
-    throw new Error('google-user-create-failed');
-  }
-  return user;
-};
-
-const getGoogleConfig = () => {
-  const clientID = normalizeText(process.env.GOOGLE_CLIENT_ID);
-  const clientSecret = normalizeText(process.env.GOOGLE_CLIENT_SECRET);
-  const callbackURL = normalizeText(process.env.GOOGLE_CALLBACK_URL);
-  if (!clientID || !clientSecret || !callbackURL) {
-    return null;
-  }
-  return { clientID, clientSecret, callbackURL };
-};
-
-let googleStrategyReady = false;
-
-const ensureGoogleStrategy = () => {
-  if (googleStrategyReady) return true;
-  const config = getGoogleConfig();
-  if (!config) return false;
-
-  passport.use(
-    new GoogleStrategy(
-      {
-        clientID: config.clientID,
-        clientSecret: config.clientSecret,
-        callbackURL: config.callbackURL,
-      },
-      async (_accessToken, _refreshToken, profile, done) => {
-        try {
-          const user = await findOrCreateGoogleUser(profile);
-          return done(null, user);
-        } catch (error) {
-          return done(error);
-        }
-      },
-    ),
-  );
-
-  googleStrategyReady = true;
-  return true;
-};
-
-const ensureGoogleConfigured = (res) => {
-  if (ensureGoogleStrategy()) return true;
-  res.status(503).json({ message: 'Google auth is not configured.' });
-  return false;
-};
-
-const createUser = async ({ name, email, username, passwordHash, googleId, avatarUrl }) => {
-  const result = await query(
-    `INSERT INTO users (name, email, username, password, google_id, avatar_url)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     RETURNING id, name, username, google_id, avatar_url`,
-    [name, email, username, passwordHash, googleId || null, avatarUrl || null],
-  );
-  return result.rows[0] || null;
-};
-
 router.post('/signup', async (req, res) => {
   const name = normalizeText(req.body?.name); // optional — can be empty
   const username = normalizeText(req.body?.username).toLowerCase();
@@ -342,7 +162,7 @@ router.post('/login', async (req, res) => {
 
     if (!usingHash) {
       const upgradedPasswordHash = await hashPassword(password);
-      await query('UPDATE users SET password = $1 WHERE id = $2', [upgradedPasswordHash, user.id]);
+      await updateUserPassword(user.id, upgradedPasswordHash);
     }
 
     const { accessToken, refreshToken } = await issueTokens(user);
@@ -451,17 +271,14 @@ router.post('/profile', async (req, res) => {
   }
 
   try {
-    const result = await query(
-      `UPDATE users
-       SET name     = COALESCE(NULLIF($1, ''), name),
-           age      = COALESCE($2,            age),
-           phone    = COALESCE($3,            phone),
-           location = COALESCE($4,            location)
-       WHERE id = $5
-       RETURNING id, name, username, age, phone, location`,
-      [name || null, age, phone, location, userId],
-    );
-    const row = result.rows[0];
+    const row = await updateUserProfile({
+      userId,
+      name,
+      age,
+      phone,
+      location,
+    });
+
     if (!row) {
       return res.status(404).json({ message: 'User not found.' });
     }
@@ -475,23 +292,230 @@ router.post('/profile', async (req, res) => {
   }
 });
 
+router.get('/calendar/status', async (req, res) => {
+  const userId = Number(req.headers['x-user-id']);
+  if (!Number.isFinite(userId) || userId <= 0) {
+    return res.status(401).json({ message: 'Unauthorized' });
+  }
+
+  try {
+    const user = await getGoogleCalendarTokensByUserId(userId);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+
+    return res.json({
+      connected: Boolean(
+        normalizeText(user.google_refresh_iv) &&
+          normalizeText(user.google_refresh_ciphertext) &&
+          normalizeText(user.google_refresh_tag),
+      ),
+    });
+  } catch (error) {
+    console.error('[auth-service] calendar status failed', error);
+    return res.status(500).json({
+      message: 'Unable to read Google Calendar status.',
+      error: devError(error),
+    });
+  }
+});
+
+router.get('/calendar/events', async (req, res) => {
+  const userId = Number(req.headers['x-user-id']);
+  if (!Number.isFinite(userId) || userId <= 0) {
+    return res.status(401).json({ message: 'Unauthorized' });
+  }
+
+  const timeMinRaw = normalizeText(req.query?.timeMin);
+  const timeMaxRaw = normalizeText(req.query?.timeMax);
+  const maxResultsRaw = normalizeText(req.query?.maxResults);
+
+  const parseIsoDate = (value, label) => {
+    if (!value) return null;
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      const error = new Error(`Invalid ${label}. Use an ISO-8601 timestamp.`);
+      error.statusCode = 400;
+      throw error;
+    }
+    return parsed.toISOString();
+  };
+
+  let timeMin;
+  let timeMax;
+
+  try {
+    timeMin = parseIsoDate(timeMinRaw, 'timeMin');
+    timeMax = parseIsoDate(timeMaxRaw, 'timeMax');
+  } catch (error) {
+    return res.status(error.statusCode || 400).json({ message: error.message || 'Invalid date range.' });
+  }
+
+  if (timeMin && timeMax && new Date(timeMin).getTime() > new Date(timeMax).getTime()) {
+    return res.status(400).json({ message: 'timeMin must be less than or equal to timeMax.' });
+  }
+
+  let maxResults = 25;
+  if (maxResultsRaw) {
+    const parsed = Number(maxResultsRaw);
+    if (!Number.isInteger(parsed) || parsed < 1 || parsed > 250) {
+      return res.status(400).json({ message: 'maxResults must be an integer between 1 and 250.' });
+    }
+    maxResults = parsed;
+  }
+
+  try {
+    const user = await getGoogleCalendarTokensByUserId(userId);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found.' });
+    }
+
+    if (
+      !normalizeText(user.google_refresh_iv) ||
+      !normalizeText(user.google_refresh_ciphertext) ||
+      !normalizeText(user.google_refresh_tag)
+    ) {
+      return res.status(401).json({ message: 'Google Calendar is not connected.' });
+    }
+
+    const decryptedRefreshToken = decryptGoogleRefreshToken({
+      iv: user.google_refresh_iv,
+      ciphertext: user.google_refresh_ciphertext,
+      tag: user.google_refresh_tag,
+    });
+
+    if (!decryptedRefreshToken) {
+      return res.status(401).json({ message: 'Google Calendar is not connected.' });
+    }
+
+    const calendarResult = await fetchCalendarEvents({
+      refreshToken: decryptedRefreshToken,
+      timeMin,
+      timeMax,
+      maxResults,
+    });
+
+    await persistGoogleTokensForUser({
+      userId,
+      refreshToken: null,
+      accessTokenExpiry: calendarResult.accessTokenExpiry,
+    });
+
+    return res.json({
+      events: calendarResult.events,
+      nextPageToken: calendarResult.nextPageToken || null,
+    });
+  } catch (error) {
+    if (
+      error?.code === 'google-refresh-invalid' ||
+      error?.code === 'google-not-connected' ||
+      error?.code === 'google-refresh-token-decrypt-failed'
+    ) {
+      try {
+        await clearGoogleTokensForUser(userId);
+      } catch (_clearTokenError) {
+        // Token cleanup failure should not mask the intended auth response.
+      }
+      return res.status(401).json({ message: 'Google Calendar is not connected.' });
+    }
+
+    if (error?.statusCode === 502) {
+      return res.status(502).json({ message: 'Google Calendar provider unavailable.' });
+    }
+
+    if (error?.statusCode === 400) {
+      return res.status(400).json({ message: error.message || 'Invalid calendar query.' });
+    }
+
+    console.error('[auth-service] calendar events fetch failed', {
+      userId,
+      code: error?.code,
+      statusCode: error?.statusCode,
+      message: error?.message,
+    });
+    return res.status(500).json({
+      message: 'Unable to fetch Google Calendar events.',
+      error: devError(error),
+    });
+  }
+});
+
 // Google OAuth
 router.get('/auth/google', (req, res, next) => {
-  if (!ensureGoogleConfigured(res)) return undefined;
+  if (!ensureGoogleConfigured({ passport, res })) return undefined;
+  setGoogleOauthSessionMode(req, GOOGLE_OAUTH_MODE_LOGIN);
+
   return passport.authenticate('google', {
-    scope: ['profile', 'email'],
+    scope: GOOGLE_LOGIN_SCOPES,
+    session: false,
+    state: true,
+  })(req, res, next);
+});
+
+router.get('/auth/google/calendar', (req, res, next) => {
+  if (!ensureGoogleConfigured({ passport, res })) return undefined;
+
+  const userId = Number(req.headers['x-user-id']);
+  if (!Number.isFinite(userId) || userId <= 0) {
+    return res.status(401).json({ message: 'Unauthorized' });
+  }
+
+  setGoogleOauthSessionMode(req, GOOGLE_OAUTH_MODE_CALENDAR, userId);
+
+  return passport.authenticate('google', {
+    scope: GOOGLE_CALENDAR_SCOPES,
+    accessType: 'offline',
+    prompt: 'consent',
+    includeGrantedScopes: true,
     session: false,
     state: true,
   })(req, res, next);
 });
 
 router.get('/auth/google/callback', (req, res, next) => {
-  if (!ensureGoogleConfigured(res)) return undefined;
+  if (!ensureGoogleConfigured({ passport, res })) return undefined;
 
-  return passport.authenticate('google', { session: false }, async (error, user) => {
-    if (error || !user) {
+  return passport.authenticate('google', { session: false }, async (error, oauthPayload) => {
+    const { mode, calendarUserId } = consumeGoogleOauthSessionMode(req);
+    const oauthMode = normalizeText(oauthPayload?.oauthMode || mode).toLowerCase() || GOOGLE_OAUTH_MODE_LOGIN;
+
+    if (error || !oauthPayload) {
       const reason = normalizeText(error?.code || error?.message) || 'oauth_failed';
+
+      if (oauthMode === GOOGLE_OAUTH_MODE_CALENDAR) {
+        const target = `${FRONTEND_ORIGIN}/profile?calendar=error&reason=${encodeURIComponent(reason)}`;
+        return res.redirect(target);
+      }
+
       const target = `${FRONTEND_ORIGIN}/?oauth=error&reason=${encodeURIComponent(reason)}`;
+      return res.redirect(target);
+    }
+
+    if (oauthMode === GOOGLE_OAUTH_MODE_CALENDAR) {
+      if (!calendarUserId) {
+        const target = `${FRONTEND_ORIGIN}/profile?calendar=error&reason=missing_session_user`;
+        return res.redirect(target);
+      }
+
+      try {
+        await persistGoogleTokensForUser({
+          userId: calendarUserId,
+          refreshToken: oauthPayload.refreshToken,
+          accessTokenExpiry: normalizeText(oauthPayload.accessToken)
+            ? estimateGoogleAccessTokenExpiry()
+            : null,
+        });
+
+        return res.redirect(`${FRONTEND_ORIGIN}/profile?calendar=connected`);
+      } catch (_tokenError) {
+        const target = `${FRONTEND_ORIGIN}/profile?calendar=error&reason=token_persist_failed`;
+        return res.redirect(target);
+      }
+    }
+
+    const user = oauthPayload.user || oauthPayload;
+    if (!user?.id) {
+      const target = `${FRONTEND_ORIGIN}/?oauth=error&reason=oauth_user_missing`;
       return res.redirect(target);
     }
 

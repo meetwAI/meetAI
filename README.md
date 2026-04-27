@@ -27,7 +27,13 @@ Services started:
 - Gateway: `http://localhost:4010`
 - Auth service: `http://localhost:4020`
 - Meeting service: `http://localhost:4001`
-- Redis: `localhost:6379`
+- AI realtime gateway: internal `http://ai-gateway:8000`
+- Redis: internal `redis:6379` (not published to host by default)
+
+Redis URL defaults are unified in compose:
+- All services: `${REDIS_URL:-redis://redis:6379/0}`
+
+AI realtime service source is located at `CHECKPOINT2/src`.
 
 Stop all services:
 

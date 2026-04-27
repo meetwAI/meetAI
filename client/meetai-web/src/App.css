@@ -1,7 +1,7 @@
 
 .previous-meetings {
 	display: grid;
-	grid-template-columns: minmax(260px, 360px) minmax(0, 1fr);
+	grid-template-columns: minmax(260px, 360px) minmax(0, 1fr) minmax(280px, 360px);
 	gap: 24px;
 	color: #f8fafc;
 	height: 100%;
@@ -14,6 +14,14 @@
 }
 
 .previous-meetings.sidebar-collapsed {
+	grid-template-columns: 64px minmax(0, 1fr) minmax(280px, 360px);
+}
+
+.previous-meetings.transcript-collapsed {
+	grid-template-columns: minmax(260px, 360px) minmax(0, 1fr);
+}
+
+.previous-meetings.sidebar-collapsed.transcript-collapsed {
 	grid-template-columns: 64px minmax(0, 1fr);
 }
 
@@ -55,6 +63,8 @@
 
 .previous-meetings.sidebar-collapsed .meeting-list-header h2,
 .previous-meetings.sidebar-collapsed .meeting-list-header p,
+.previous-meetings.sidebar-collapsed .meeting-filter-row,
+.previous-meetings.sidebar-collapsed .calendar-connect-banner,
 .previous-meetings.sidebar-collapsed .meeting-cards {
 	display: none;
 }
@@ -84,6 +94,91 @@
 .meeting-list-header p {
 	margin: 6px 0 0;
 	color: rgb(148 163 184);
+}
+
+.calendar-connect-banner {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	padding: 10px 12px;
+	margin-top: 12px;
+	border-radius: 12px;
+	border: 1px solid rgb(56 189 248 / 30%);
+	background: rgb(15 23 42 / 65%);
+	color: #f8fafc;
+}
+
+.calendar-connect-banner strong {
+	font-size: 0.92rem;
+	font-weight: 700;
+	margin-right: 6px;
+}
+
+.calendar-connect-banner span {
+	font-size: 0.82rem;
+	color: rgb(148 163 184);
+}
+
+.calendar-connect-banner button {
+	border-radius: 10px;
+	border: 1px solid rgb(56 189 248 / 55%);
+	background: rgb(56 189 248 / 18%);
+	color: #f8fafc;
+	padding: 0.4rem 0.75rem;
+	font-weight: 600;
+}
+
+.calendar-connect-banner button:hover {
+	background: rgb(56 189 248 / 28%);
+}
+
+.meeting-filter-row {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 10px;
+	margin-top: 12px;
+}
+
+.meeting-filter-field {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	font-size: 0.78rem;
+	color: rgb(148 163 184);
+}
+
+.meeting-filter-field select,
+.meeting-filter-field input {
+	padding: 0.42rem 0.55rem;
+	border-radius: 10px;
+	border: 1px solid rgb(56 189 248 / 35%);
+	background: rgb(15 23 42 / 70%);
+	color: #f8fafc;
+	font-size: 0.86rem;
+	outline: none;
+}
+
+.meeting-filter-field select:focus,
+.meeting-filter-field input:focus {
+	border-color: rgb(56 189 248 / 70%);
+	box-shadow: 0 0 0 1px rgb(56 189 248 / 25%);
+}
+
+.meeting-filter-clear {
+	height: 38px;
+	align-self: end;
+	border-radius: 10px;
+	border: 1px solid rgb(56 189 248 / 42%);
+	background: rgb(56 189 248 / 12%);
+	color: #f8fafc;
+	font-size: 0.82rem;
+	font-weight: 600;
+}
+
+.meeting-filter-clear:disabled {
+	opacity: 0.45;
+	cursor: not-allowed;
 }
 
 .meeting-cards {
@@ -160,6 +255,121 @@
 	gap: 18px;
 	min-height: 0;
 	overflow: hidden;
+}
+
+.meeting-transcript-panel {
+	background: rgb(30 41 59 / 56%);
+	backdrop-filter: blur(10px);
+	border-radius: 20px;
+	border: 1px solid rgb(56 189 248 / 24%);
+	padding: 14px;
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	min-height: 0;
+	overflow: hidden;
+}
+
+.meeting-transcript-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	gap: 10px;
+}
+
+.meeting-transcript-header h3 {
+	margin: 0;
+	font-size: 1rem;
+}
+
+.meeting-transcript-close,
+.meeting-transcript-open,
+.meeting-transcript-toggle {
+	border-radius: 10px;
+	border: 1px solid rgb(56 189 248 / 45%);
+	background: rgb(56 189 248 / 16%);
+	color: #f8fafc;
+	padding: 0.4rem 0.75rem;
+	font-size: 0.82rem;
+	font-weight: 600;
+	cursor: pointer;
+	align-self: start;
+}
+
+.meeting-transcript-toggle {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	height: 40px;
+	padding: 0 0.85rem;
+	align-self: center;
+}
+
+.meeting-transcript-toggle.is-open {
+	background: rgb(56 189 248 / 26%);
+	border-color: rgb(56 189 248 / 60%);
+}
+
+.meeting-transcript-body {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	padding-right: 4px;
+}
+
+.meeting-transcript-line {
+	background: rgb(15 23 42 / 60%);
+	border: 1px solid rgb(56 189 248 / 20%);
+	border-radius: 12px;
+	padding: 10px 12px;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.meeting-transcript-entry + .meeting-transcript-entry {
+	margin-top: 8px;
+	padding-top: 8px;
+	border-top: 1px dashed rgb(56 189 248 / 18%);
+}
+
+.meeting-transcript-meta {
+	display: flex;
+	justify-content: space-between;
+	gap: 8px;
+	font-size: 0.76rem;
+	color: rgb(148 163 184);
+}
+
+.meeting-transcript-line p,
+.meeting-transcript-buffer p {
+	margin: 0;
+	line-height: 1.45;
+	color: rgb(226 232 240);
+}
+
+.meeting-transcript-buffer-inline {
+	color: rgb(148 163 184);
+	font-style: italic;
+}
+
+.meeting-transcript-buffer {
+	background: rgb(15 23 42 / 70%);
+	border: 1px dashed rgb(56 189 248 / 45%);
+	border-radius: 12px;
+	padding: 10px 12px;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.meeting-transcript-empty {
+	margin: 0;
+	color: rgb(148 163 184);
+	font-size: 0.9rem;
 }
 
 .meeting-detail-topbar {
@@ -274,6 +484,12 @@
 	flex-direction: column;
 	align-items: flex-end;
 	gap: 10px;
+}
+
+.meeting-header-actions-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
 }
 
 .meeting-actions-menu-wrapper {
@@ -692,6 +908,24 @@
 	justify-content: flex-end;
 }
 
+.profile-calendar-card {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	gap: 16px;
+	flex-wrap: wrap;
+}
+
+.profile-calendar-copy h2 {
+	margin: 0;
+	font-size: 1.2rem;
+}
+
+.profile-calendar-copy p {
+	margin: 6px 0 0;
+	color: rgba(245, 240, 229, 0.7);
+}
+
 .profile-error,
 .profile-success {
 	margin: 0;
@@ -719,5 +953,19 @@
 	.previous-meetings {
 		grid-template-columns: 1fr;
 		padding: 14px;
+	}
+
+	.previous-meetings.sidebar-collapsed,
+	.previous-meetings.transcript-collapsed,
+	.previous-meetings.sidebar-collapsed.transcript-collapsed {
+		grid-template-columns: 1fr;
+	}
+
+	.meeting-transcript-open {
+		width: fit-content;
+	}
+
+	.meeting-filter-row {
+		grid-template-columns: 1fr;
 	}
 }
