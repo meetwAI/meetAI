@@ -1,3 +1,7 @@
 .env*
 CHECKPOINT1/
 docker-compose.mac.yml
+.DS_Store
+.vscode/settings.json
+client/.DS_Store
+.DS_Store
