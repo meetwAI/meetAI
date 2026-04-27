@@ -149,6 +149,21 @@ const buildAiWsUrl = ({ userId, meetingId }) => {
   return target.toString();
 };
 
+const extractTranscriptText = (payload = {}) => {
+  const lines = Array.isArray(payload.lines) ? payload.lines : [];
+  const committedText = lines
+    .map((line) => String(line?.text || '').trim())
+    .filter(Boolean)
+    .join(' ')
+    .trim();
+  const bufferText = String(payload.buffer_transcription || '').trim();
+
+  if (committedText && bufferText) {
+    return `${committedText} ${bufferText}`.trim();
+  }
+  return committedText || bufferText;
+};
+
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
@@ -157,7 +172,7 @@ app.get('/health', (_req, res) => {
 // Auth proxy
 // ---------------------------------------------------------------------------
 
-const proxyAuth = (path, req, res) => {
+const proxyAuth = (path, req, res, extraHeaders = {}) => {
   const targetUrl = new URL(path, AUTH_SERVICE_URL);
   const client = targetUrl.protocol === 'https:' ? https : http;
   const hasBody = req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH';
@@ -165,6 +180,7 @@ const proxyAuth = (path, req, res) => {
 
   const headers = {
     Cookie: req.headers.cookie || '',
+    ...extraHeaders,
   };
 
   if (hasBody) {
@@ -395,9 +411,87 @@ app.post('/refresh', (req, res) => proxyAuth('/refresh', req, res));
 app.post('/logout', (req, res) => proxyAuth('/logout', req, res));
 app.post('/verify', (req, res) => proxyAuth('/verify', req, res));
 app.get('/auth/google', (req, res) => proxyAuth(req.originalUrl, req, res));
+app.get('/auth/google/calendar', verifyAccess, (req, res) =>
+  proxyAuth('/auth/google/calendar', req, res, {
+    'x-user-id': req.authUser?.id ? String(req.authUser.id) : '',
+  }),
+);
 app.get('/auth/google/callback', (req, res) => proxyAuth(req.originalUrl, req, res));
 
 app.use(verifyAccess); // verification required for all routes below
+
+app.get('/calendar/status', (req, res) => {
+  const targetUrl = new URL('/calendar/status', AUTH_SERVICE_URL);
+  const client = targetUrl.protocol === 'https:' ? https : http;
+
+  const proxyReq = client.request(
+    targetUrl,
+    {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        'x-user-id': req.authUser?.id ? String(req.authUser.id) : '',
+      },
+    },
+    (proxyRes) => {
+      let data = '';
+      proxyRes.on('data', (chunk) => {
+        data += chunk;
+      });
+      proxyRes.on('end', () => {
+        res
+          .status(proxyRes.statusCode || 200)
+          .set('content-type', proxyRes.headers['content-type'] || 'application/json')
+          .send(data);
+      });
+    },
+  );
+
+  proxyReq.on('error', (error) => {
+    console.error('[gateway] auth service calendar status proxy error', error);
+    res.status(502).json({ message: 'Auth service unavailable.' });
+  });
+
+  proxyReq.end();
+});
+
+app.get('/calendar/events', (req, res) => {
+  const params = new URLSearchParams(req.query || {});
+  const queryString = params.toString();
+  const targetPath = queryString ? `/calendar/events?${queryString}` : '/calendar/events';
+  const targetUrl = new URL(targetPath, AUTH_SERVICE_URL);
+  const client = targetUrl.protocol === 'https:' ? https : http;
+
+  const proxyReq = client.request(
+    targetUrl,
+    {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        'x-user-id': req.authUser?.id ? String(req.authUser.id) : '',
+      },
+    },
+    (proxyRes) => {
+      let data = '';
+      proxyRes.on('data', (chunk) => {
+        data += chunk;
+      });
+      proxyRes.on('end', () => {
+        res
+          .status(proxyRes.statusCode || 200)
+          .set('content-type', proxyRes.headers['content-type'] || 'application/json')
+          .send(data);
+      });
+    },
+  );
+
+  proxyReq.on('error', (error) => {
+    console.error('[gateway] auth service calendar proxy error', error);
+    res.status(502).json({ message: 'Auth service unavailable.' });
+  });
+
+  proxyReq.end();
+});
 
 // Profile setup — auth-service handles persistence
 app.post('/profile', (req, res) => {
@@ -438,7 +532,11 @@ app.post('/profile', (req, res) => {
   proxyReq.end();
 });
 
-app.get('/meetings/dummy', (req, res) => proxyMeetingService('GET', '/meetings/dummy', req, res));
+app.get('/meetings/dummy', (req, res) => {
+  const params = new URLSearchParams(req.query || {});
+  const qs = params.toString();
+  proxyMeetingService('GET', qs ? `/meetings/dummy?${qs}` : '/meetings/dummy', req, res);
+});
 app.post('/meetings', (req, res) => proxyMeetingService('POST', '/meetings', req, res));
 
 app.get('/meetings/recent', (req, res) => {
@@ -509,6 +607,7 @@ io.on('connection', (socket) => {
   let aiSocket = null;
   let activeMeetingId = null;
   let didEmitEnded = false;
+  let lastLoggedTranscript = '';
 
   const emitSessionEnded = (payload = {}) => {
     if (!activeMeetingId || didEmitEnded) {
@@ -541,30 +640,37 @@ io.on('connection', (socket) => {
     aiSocket = null;
   };
 
-  socket.on('meeting-session-start', async (payload) => {
-    if (aiSocket && aiSocket.readyState !== WebSocket.CLOSED) {
-      socket.emit('meeting-session-error', { message: 'AI session is already active.' });
-      return;
+  const ensureAiSession = async (meetingId) => {
+    if (aiSocket && aiSocket.readyState !== WebSocket.CLOSED && Number(activeMeetingId) === Number(meetingId)) {
+      return true;
     }
 
-    const meetingId = Number(payload?.meetingId);
+    if (aiSocket && aiSocket.readyState !== WebSocket.CLOSED) {
+      try {
+        cleanupAiSocket();
+      } catch {
+        // ignore
+      }
+    }
+
     const userId = Number(socket.data.authUser?.id);
     const authToken = String(socket.data.authToken || '');
+    console.log('[gateway] meeting-session-start requested', { socketId: socket.id, meetingId, userId });
 
     if (!Number.isFinite(meetingId) || meetingId <= 0) {
       socket.emit('meeting-session-error', { message: 'Invalid meeting id.' });
-      return;
+      return false;
     }
 
     if (!Number.isFinite(userId) || userId <= 0) {
       socket.emit('meeting-session-error', { message: 'Unauthorized user context.' });
-      return;
+      return false;
     }
 
     const ownsMeeting = await ensureMeetingOwnership({ meetingId, userId, authToken });
     if (!ownsMeeting) {
       socket.emit('meeting-session-error', { message: 'Meeting not found or not owned by user.' });
-      return;
+      return false;
     }
 
     const wsUrl = buildAiWsUrl({ userId, meetingId });
@@ -573,9 +679,10 @@ io.on('connection', (socket) => {
     aiSocket = ws;
     activeMeetingId = meetingId;
     didEmitEnded = false;
+    lastLoggedTranscript = '';
 
     ws.on('open', () => {
-      console.log('[gateway] connected to ai service', { socketId: socket.id, meetingId });
+      console.log('[gateway] connected to ai service', { socketId: socket.id, meetingId, wsUrl });
     });
 
     ws.on('message', (raw) => {
@@ -589,7 +696,20 @@ io.on('connection', (socket) => {
         return;
       }
 
+      console.log('[gateway] ai payload received', {
+        meetingId,
+        type: parsed?.type || 'transcript',
+        status: parsed?.status || '',
+        lines: Array.isArray(parsed?.lines) ? parsed.lines.length : 0,
+        bufferChars: String(parsed?.buffer_transcription || '').length,
+      });
+
       if (parsed?.type === 'config') {
+        console.log('[gateway] ai session configured', {
+          meetingId,
+          aiSessionId: parsed.session_id || '',
+          sampleRate: Number(parsed.sample_rate) || 16000,
+        });
         socket.emit('meeting-session-ready', {
           meetingId,
           aiSessionId: parsed.session_id || '',
@@ -601,11 +721,19 @@ io.on('connection', (socket) => {
       }
 
       if (parsed?.type === 'ready_to_stop') {
+        console.log('[gateway] ai session ready_to_stop', { meetingId });
         emitSessionEnded();
         cleanupAiSocket();
         aiSocket = null;
         activeMeetingId = null;
+        lastLoggedTranscript = '';
         return;
+      }
+
+      const transcriptText = extractTranscriptText(parsed);
+      if (transcriptText && transcriptText !== lastLoggedTranscript) {
+        console.log(`[gateway][meeting:${meetingId}] transcript: ${transcriptText}`);
+        lastLoggedTranscript = transcriptText;
       }
 
       socket.emit('meeting-transcript-update', {
@@ -616,9 +744,23 @@ io.on('connection', (socket) => {
     });
 
     ws.on('error', (error) => {
+      console.error('[gateway] ai socket error', {
+        meetingId,
+        wsUrl,
+        message: error?.message || 'unknown error',
+      });
       socket.emit('meeting-session-error', {
         message: 'AI service connection failed.',
         detail: error?.message || '',
+      });
+    });
+
+    ws.on('unexpected-response', (_request, response) => {
+      console.error('[gateway] ai socket unexpected response', {
+        meetingId,
+        wsUrl,
+        statusCode: response?.statusCode || null,
+        statusMessage: response?.statusMessage || '',
       });
     });
 
@@ -626,11 +768,20 @@ io.on('connection', (socket) => {
       const reason = Buffer.isBuffer(reasonBuffer)
         ? reasonBuffer.toString('utf-8')
         : String(reasonBuffer || '');
+      console.log('[gateway] ai socket closed', { meetingId, wsUrl, code, reason });
       emitSessionEnded({ code, reason });
       cleanupAiSocket();
       aiSocket = null;
       activeMeetingId = null;
+      lastLoggedTranscript = '';
     });
+
+    return true;
+  };
+
+  socket.on('meeting-session-start', async (payload) => {
+    const meetingId = Number(payload?.meetingId);
+    await ensureAiSession(meetingId);
   });
 
   socket.on('meeting-audio-pcm', (payload) => {
@@ -684,6 +835,7 @@ io.on('connection', (socket) => {
     cleanupAiSocket();
     aiSocket = null;
     activeMeetingId = null;
+    lastLoggedTranscript = '';
   });
 });
 

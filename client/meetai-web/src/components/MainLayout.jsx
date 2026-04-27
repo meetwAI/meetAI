@@ -15,47 +15,101 @@ const MainLayout = () => {
     const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
     const displayStreamRef = React.useRef(null);
     const audioStreamRef = React.useRef(null);
-    const mediaRecorderRef = React.useRef(null);
+    const audioContextRef = React.useRef(null);
+    const sourceNodeRef = React.useRef(null);
+    const processorNodeRef = React.useRef(null);
     const socketRef = React.useRef(null);
-    const chunkIndexRef = React.useRef(0);
-    const chunkStartedAtRef = React.useRef(0);
     const activeMeetingIdRef = React.useRef(null);
+    const cumulativeLinesRef = React.useRef([]);
+    const segmentLinesRef = React.useRef([]);
 
-    const appendMessageToMeetingCache = React.useCallback((meetingId, message) => {
+    const normalizeLine = React.useCallback((line) => ({
+        speaker: Number.isFinite(Number(line?.speaker)) ? Number(line.speaker) : -1,
+        text: String(line?.text || '').trim(),
+        start: line?.start ?? null,
+        end: line?.end ?? null,
+        detected_language: line?.detected_language ?? null,
+    }), []);
+
+    const lineSignature = React.useCallback((line) => {
+        const speaker = Number.isFinite(Number(line?.speaker)) ? Number(line.speaker) : -1;
+        const text = String(line?.text || '').trim();
+        const start = line?.start ?? '';
+        const end = line?.end ?? '';
+        return `${speaker}|${start}|${end}|${text}`;
+    }, []);
+
+    const appendUniqueLines = React.useCallback((baseLines, incomingLines) => {
+        if (!Array.isArray(incomingLines) || incomingLines.length === 0) {
+            return Array.isArray(baseLines) ? baseLines : [];
+        }
+
+        const next = Array.isArray(baseLines) ? [...baseLines] : [];
+        incomingLines.forEach((line) => {
+            const key = lineSignature(line);
+            const lastKey = next.length ? lineSignature(next[next.length - 1]) : '';
+            if (!key || key === lastKey) {
+                return;
+            }
+            next.push(line);
+        });
+        return next;
+    }, [lineSignature]);
+
+    const applyTranscriptStateToCache = React.useCallback((meetingId, transcriptState) => {
+        const meetingIdString = String(meetingId);
         queryClient.setQueryData(['meeting', String(meetingId)], (current) => {
             if (!current || String(current.id) !== String(meetingId)) {
                 return current;
             }
-            const messages = Array.isArray(current.messages) ? current.messages : [];
-            return { ...current, messages: [...messages, message] };
+            return { ...current, ...transcriptState };
         });
 
-        queryClient.setQueryData(['meetings', 'dummy'], (current) => {
+        queryClient.setQueriesData({ queryKey: ['meetings', 'dummy'] }, (current) => {
             const meetings = Array.isArray(current) ? current : [];
             return meetings.map((meeting) => {
-                if (String(meeting.id) !== String(meetingId)) {
+                if (String(meeting.id) !== meetingIdString) {
                     return meeting;
                 }
-                const messages = Array.isArray(meeting.messages) ? meeting.messages : [];
-                return { ...meeting, messages: [...messages, message] };
+                return { ...meeting, ...transcriptState };
             });
         });
-
     }, [queryClient]);
 
     const stopCapture = React.useCallback(async () => {
         const completedMeetingId = activeMeetingIdRef.current;
-        if (mediaRecorderRef.current) {
-            if (mediaRecorderRef.current.state !== 'inactive') {
-                mediaRecorderRef.current.stop();
+        if (processorNodeRef.current) {
+            try {
+                processorNodeRef.current.disconnect();
+            } catch {
+                // ignore
             }
-            mediaRecorderRef.current = null;
+            processorNodeRef.current.onaudioprocess = null;
+            processorNodeRef.current = null;
+        }
+        if (sourceNodeRef.current) {
+            try {
+                sourceNodeRef.current.disconnect();
+            } catch {
+                // ignore
+            }
+            sourceNodeRef.current = null;
+        }
+        if (audioContextRef.current) {
+            try {
+                await audioContextRef.current.close();
+            } catch {
+                // ignore
+            }
+            audioContextRef.current = null;
         }
         if (socketRef.current) {
             try {
+                socketRef.current.emit('meeting-session-stop');
                 socketRef.current.off('connect');
                 socketRef.current.off('connect_error');
-                socketRef.current.off('meeting-audio-processed');
+                socketRef.current.off('meeting-transcript-update');
+                socketRef.current.off('meeting-session-error');
             } catch {
                 // ignore
             }
@@ -80,6 +134,8 @@ const MainLayout = () => {
             }
         }
         activeMeetingIdRef.current = null;
+        cumulativeLinesRef.current = [];
+        segmentLinesRef.current = [];
         setCaptureState('idle');
     }, [queryClient]);
 
@@ -120,8 +176,15 @@ const MainLayout = () => {
                 participants: [],
                 messages: [],
                 actionItems: [],
+                lines: [],
+                bufferTranscription: '',
+                bufferDiarization: '',
+                asrStatus: 'active_transcription',
+                updatedAt: new Date().toISOString(),
             });
             navigate(`/meetings/${meetingId}`);
+            cumulativeLinesRef.current = [];
+            segmentLinesRef.current = [];
 
             const displayStream = await navigator.mediaDevices.getDisplayMedia({
                 video: true,
@@ -157,69 +220,107 @@ const MainLayout = () => {
                 console.error('[meeting-client] gateway connection error', error);
                 setCaptureError(error?.message || 'Unable to connect to meeting service.');
             });
-            socket.on('meeting-audio-processed', (payload) => {
-                console.log('[meeting-client] server response', payload);
-                if (payload) {
-                    const meetingMessage = typeof payload === 'string' ? payload : payload?.message || '';
-                    setServerMessage(meetingMessage);
-                    const targetMeetingId = activeMeetingIdRef.current;
-                    if (meetingMessage && targetMeetingId) {
-                        fetchWithAuth(`/meetings/${targetMeetingId}/messages`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ content: meetingMessage, role: 'assistant' }),
-                        })
-                            .then((response) => response.json())
-                            .then((messagePayload) => {
-                                if (messagePayload?.message) {
-                                    appendMessageToMeetingCache(targetMeetingId, messagePayload.message);
-                                }
-                            })
-                            .catch((error) => {
-                                console.error('[meeting-client] failed to append stream message', error);
-                            });
+            socket.on('meeting-transcript-update', (payload) => {
+                const targetMeetingId = activeMeetingIdRef.current;
+                if (!targetMeetingId) {
+                    return;
+                }
+                if (!cumulativeLinesRef.current.length) {
+                    const cachedMeeting = queryClient.getQueryData(['meeting', String(targetMeetingId)]);
+                    const cachedLines = Array.isArray(cachedMeeting?.lines) ? cachedMeeting.lines : [];
+                    if (cachedLines.length) {
+                        cumulativeLinesRef.current = cachedLines;
                     }
                 }
+
+                const incomingLines = (Array.isArray(payload?.lines) ? payload.lines : [])
+                    .map((line) => normalizeLine(line))
+                    .filter((line) => line.text);
+                const previousSegment = segmentLinesRef.current;
+
+                let linesToAppend = incomingLines;
+                const startsWithPreviousSegment =
+                    previousSegment.length > 0 &&
+                    incomingLines.length >= previousSegment.length &&
+                    previousSegment.every((line, index) => lineSignature(line) === lineSignature(incomingLines[index]));
+
+                if (startsWithPreviousSegment) {
+                    linesToAppend = incomingLines.slice(previousSegment.length);
+                }
+
+                const mergedLines = appendUniqueLines(cumulativeLinesRef.current, linesToAppend);
+                cumulativeLinesRef.current = mergedLines;
+                segmentLinesRef.current = incomingLines;
+
+                const transcriptState = {
+                    aiSessionId: String(payload?.session_id || payload?.aiSessionId || ''),
+                    asrStatus: String(payload?.status || payload?.asrStatus || 'active_transcription'),
+                    lines: mergedLines,
+                    bufferTranscription: String(payload?.buffer_transcription || ''),
+                    bufferDiarization: String(payload?.buffer_diarization || ''),
+                    updatedAt: new Date().toISOString(),
+                };
+
+                const headline = mergedLines.slice(-3).map((line) => line.text).filter(Boolean).join(' ');
+                if (headline) {
+                    setServerMessage(headline);
+                }
+
+                applyTranscriptStateToCache(targetMeetingId, transcriptState);
+
+                fetchWithAuth(`/meetings/${targetMeetingId}/transcript`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(transcriptState),
+                })
+                    .catch((error) => {
+                        console.error('[meeting-client] failed to persist transcript state', error);
+                    });
             });
 
-            chunkIndexRef.current = 0;
-            chunkStartedAtRef.current = Date.now();
+            socket.on('meeting-session-error', (payload) => {
+                const detail = typeof payload?.detail === 'string' && payload.detail
+                    ? ` (${payload.detail})`
+                    : '';
+                setCaptureError((payload?.message || 'Meeting session error.') + detail);
+            });
 
-            const preferredMimeType = 'audio/webm;codecs=opus';
-            const recorderOptions = MediaRecorder.isTypeSupported(preferredMimeType)
-                ? { mimeType: preferredMimeType }
-                : undefined;
+            const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+            if (!AudioContextClass) {
+                throw new Error('AudioContext is not supported in this browser.');
+            }
 
-            const mediaRecorder = new MediaRecorder(audioStream, recorderOptions);
-            mediaRecorderRef.current = mediaRecorder;
+            const audioContext = new AudioContextClass({ sampleRate: 16000 });
+            await audioContext.resume();
+            audioContextRef.current = audioContext;
 
-            mediaRecorder.ondataavailable = async (event) => {
-                if (!event.data || event.data.size === 0) {
+            const sourceNode = audioContext.createMediaStreamSource(audioStream);
+            sourceNodeRef.current = sourceNode;
+
+            const processorNode = audioContext.createScriptProcessor(4096, 1, 1);
+            processorNodeRef.current = processorNode;
+            processorNode.onaudioprocess = (event) => {
+                const liveSocket = socketRef.current;
+                if (!liveSocket || !liveSocket.connected || !activeMeetingIdRef.current) {
                     return;
                 }
 
-                const durationMs = Date.now() - chunkStartedAtRef.current;
-                chunkStartedAtRef.current = Date.now();
+                const input = event.inputBuffer.getChannelData(0);
+                if (!input || input.length === 0) {
+                    return;
+                }
 
-                const arrayBuffer = await event.data.arrayBuffer();
-                const binaryPayload = new Uint8Array(arrayBuffer);
-                const meta = {
-                    meetingId: Number(activeMeetingIdRef.current),
-                    chunkIndex: Number(chunkIndexRef.current),
-                    durationMs: Number(durationMs),
-                    mimeType: String(event.data.type || preferredMimeType),
-                };
-                console.log('[meeting-client] sending chunk', meta);
-                socket.emit(
-                    'meeting-audio-chunk',
-                    meta,
-                    binaryPayload,
-                );
-
-                chunkIndexRef.current += 1;
+                const pcm16 = new Int16Array(input.length);
+                for (let i = 0; i < input.length; i += 1) {
+                    const sample = Math.max(-1, Math.min(1, input[i]));
+                    pcm16[i] = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+                }
+                liveSocket.emit('meeting-audio-pcm', pcm16);
             };
 
-            mediaRecorder.start(10_000);
+            sourceNode.connect(processorNode);
+            processorNode.connect(audioContext.destination);
+            socket.emit('meeting-session-start', { meetingId: Number(meetingId) });
 
             const [videoTrack] = displayStream.getVideoTracks();
             if (videoTrack) {
@@ -233,7 +334,7 @@ const MainLayout = () => {
             await stopCapture();
             setCaptureError(error?.message || 'Unable to capture tab audio.');
         }
-    }, [appendMessageToMeetingCache, navigate, queryClient, stopCapture]);
+    }, [appendUniqueLines, applyTranscriptStateToCache, lineSignature, navigate, normalizeLine, queryClient, stopCapture]);
 
     return (
         <div className="main-layout">
@@ -315,18 +416,17 @@ const MainLayout = () => {
                 </NavLink>
             </nav>
 
-            {(captureState === 'requesting' || captureState === 'capturing' || serverMessage || captureError) && (
+            {/* {(captureState === 'requesting' || captureState === 'capturing' || serverMessage || captureError) && (
                 <div className="capture-status-strip">
                     {captureState === 'requesting' && (
-                        <p className="recap-summary">Waiting for permission to capture a tab…</p>
+                        <p className="recap-summary">Waiting for permission to capture a tab...</p>
                     )}
                     {captureState === 'capturing' && (
-                        <p className="recap-summary">Capturing tab audio and streaming 60s chunks…</p>
+                        <p className="recap-summary">Capturing tab audio and streaming realtime PCM...</p>
                     )}
-                    {serverMessage && <p className="recap-summary">{serverMessage}</p>}
                     {captureError && <p className="recap-summary">{captureError}</p>}
                 </div>
-            )}
+            )} */}
 
             <main className="main-content">
                 <Outlet />
@@ -336,3 +436,5 @@ const MainLayout = () => {
 };
 
 export default MainLayout;
+
+

@@ -1,7 +1,7 @@
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
-const { createClient } = require('redis');
-const { requireEnv, requireNumberEnv } = require('../../config/env');
+const { requireNumberEnv } = require('../../config/env');
+const { getRedisClient, ensureRedisReady } = require('../../config/redis');
 
 const readSecrets = () => {
   const activeSecret = process.env.JWT_ACTIVE_SECRET || process.env.JWT_SECRET || '';
@@ -28,20 +28,22 @@ const accessTokenCacheKey = (token) => `auth:access:${hashToken(token)}`;
 const accessTokenCacheKeyByHash = (tokenHash) => `auth:access:${tokenHash}`;
 const refreshTokenCacheKeyByHash = (tokenHash) => `auth:refresh:${tokenHash}`;
 
-const redisClient = createClient({
-  url: requireEnv('REDIS_URL'),
+const redisClient = getRedisClient({
+  cacheKey: 'auth-service',
+  serviceName: 'auth-service',
 });
 
-redisClient.on('error', (error) => {
-  console.error('[auth-service] redis error', error);
-});
-
-redisClient.connect().catch((error) => {
-  console.error('[auth-service] redis connection error', error);
-});
+const ensureAuthRedisReady = async () => {
+  const redisReady = await ensureRedisReady(redisClient, 'auth-service');
+  if (!redisReady) {
+    throw new Error('redis-unavailable');
+  }
+};
 
 const logRedisSnapshot = async (reason) => {
   try {
+    await ensureAuthRedisReady();
+
     const entries = [];
     for await (const scanned of redisClient.scanIterator({ MATCH: '*', COUNT: 100 })) {
       const keys = Array.isArray(scanned) ? scanned : [scanned];
@@ -49,8 +51,13 @@ const logRedisSnapshot = async (reason) => {
         if (typeof key !== 'string') {
           continue;
         }
-        const value = await redisClient.get(key);
-        entries.push({ key, value });
+        const type = await redisClient.type(key);
+        if (type === 'string') {
+          const value = await redisClient.get(key);
+          entries.push({ key, type, value });
+          continue;
+        }
+        entries.push({ key, type, value: `<${type}>` });
       }
     }
 
@@ -65,6 +72,8 @@ const revokeUserRefreshToken = async (userId) => {
   if (!userId) {
     return;
   }
+
+  await ensureAuthRedisReady();
 
   const indexKey = userRefreshIndexKey(userId);
   const previousRefreshHash = await redisClient.get(indexKey);
@@ -81,6 +90,8 @@ const revokeUserAccessToken = async (userId) => {
     return;
   }
 
+  await ensureAuthRedisReady();
+
   const indexKey = userAccessIndexKey(userId);
   const previousAccessHash = await redisClient.get(indexKey);
   if (!previousAccessHash) {
@@ -92,6 +103,8 @@ const revokeUserAccessToken = async (userId) => {
 };
 
 const issueTokens = async (user) => {
+  await ensureAuthRedisReady();
+
   const userId = String(user.id);
   await revokeUserRefreshToken(userId);
   await revokeUserAccessToken(userId);
@@ -133,6 +146,8 @@ const verifyWithRotation = (token) => {
 };
 
 const verifyAccessToken = async (token) => {
+  await ensureAuthRedisReady();
+
   const payload = verifyWithRotation(token);
   if (payload?.tokenType !== 'access') {
     throw new Error('invalid-token-type');
@@ -145,6 +160,8 @@ const verifyAccessToken = async (token) => {
 };
 
 const verifyRefreshToken = async (token) => {
+  await ensureAuthRedisReady();
+
   const payload = verifyWithRotation(token);
   if (payload?.tokenType !== 'refresh') {
     throw new Error('invalid-token-type');
@@ -165,6 +182,8 @@ const revokeToken = async (token, tokenType) => {
   if (!token || !tokenType) {
     return;
   }
+
+  await ensureAuthRedisReady();
 
   if (tokenType === 'access') {
     const tokenHash = hashToken(token);

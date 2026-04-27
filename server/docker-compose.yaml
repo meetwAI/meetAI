@@ -13,11 +13,11 @@ services:
     depends_on:
       - redis
     environment:
-      REDIS_URL: redis://redis:6379
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
 
   meeting-service:
     build: ./services/meeting-service
     depends_on:
       - redis
     environment:
-      REDIS_URL: redis://redis:6379
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}

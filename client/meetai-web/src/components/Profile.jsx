@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { disconnectSocket } from '../api/socketClient';
 import { fetchWithAuth } from '../api/fetchWithAuth';
@@ -22,6 +22,56 @@ export default function Profile() {
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [calendarConnected, setCalendarConnected] = useState(false);
+  const [calendarStatusLoading, setCalendarStatusLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+
+    const params = new URLSearchParams(window.location.search);
+    const calendarState = params.get('calendar');
+    const reason = params.get('reason');
+
+    if (calendarState === 'connected') {
+      setStatus('Google Calendar connected successfully.');
+      setError('');
+    }
+
+    if (calendarState === 'error') {
+      const normalizedReason = reason ? ` (${String(reason).replace(/_/g, ' ')})` : '';
+      setError(`Failed to connect Google Calendar.${normalizedReason}`);
+      setStatus('');
+    }
+
+    if (calendarState) {
+      navigate('/profile', { replace: true });
+    }
+
+    const loadCalendarStatus = async () => {
+      setCalendarStatusLoading(true);
+      try {
+        const response = await fetchWithAuth('/calendar/status');
+        const payload = await response.json().catch(() => ({}));
+        if (active) {
+          setCalendarConnected(Boolean(payload?.connected));
+        }
+      } catch {
+        if (active) {
+          setCalendarConnected(false);
+        }
+      } finally {
+        if (active) {
+          setCalendarStatusLoading(false);
+        }
+      }
+    };
+
+    loadCalendarStatus();
+
+    return () => {
+      active = false;
+    };
+  }, [navigate]);
 
   const handleLogout = async () => {
     try {
@@ -96,6 +146,10 @@ export default function Profile() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleConnectGoogleCalendar = () => {
+    window.location.href = `${API_URL}/auth/google/calendar`;
   };
 
   return (
@@ -174,6 +228,27 @@ export default function Profile() {
           </button>
         </div>
       </form>
+
+      <section className="profile-card profile-calendar-card" aria-live="polite">
+        <div className="profile-calendar-copy">
+          <h2>Google Calendar Access</h2>
+          <p>
+            {calendarStatusLoading
+              ? 'Checking Google Calendar connection...'
+              : calendarConnected
+                ? 'Connected. You can use calendar and meetings access when needed.'
+                : 'Not connected yet. Connect when you are ready.'}
+          </p>
+        </div>
+        <button
+          type="button"
+          className="primary-button"
+          onClick={handleConnectGoogleCalendar}
+          disabled={calendarStatusLoading}
+        >
+          {calendarConnected ? 'Reconnect Google Calendar' : 'Connect Google Calendar'}
+        </button>
+      </section>
     </div>
   );
 }

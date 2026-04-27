@@ -2,11 +2,7 @@ DO $$
 DECLARE
   admin_id BIGINT;
 BEGIN
-  SELECT id INTO admin_id FROM users WHERE user_name = 'admin' LIMIT 1;
-
-  IF admin_id IS NULL THEN
-    SELECT id INTO admin_id FROM users WHERE username = 'admin' LIMIT 1;
-  END IF;
+  SELECT id INTO admin_id FROM users WHERE username = 'admin' LIMIT 1;
 
   IF admin_id IS NULL THEN
     RAISE EXCEPTION 'admin user not found';

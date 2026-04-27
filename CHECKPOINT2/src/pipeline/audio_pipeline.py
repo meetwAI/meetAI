@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import Optional
+import logging
 
 import numpy as np
 
@@ -11,6 +12,7 @@ from src.pipeline.tokens_alignment import TokensAlignment
 
 MIN_DURATION_REAL_SILENCE = 5.0
 MIN_TRANSCRIPTION_BUFFER_SEC = 0.5
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -55,6 +57,19 @@ class AudioPipeline:
 
     async def process_audio(self, pcm_bytes: bytes) -> dict:
         if self.stopped:
+            return self._build_front_data()
+
+        if not pcm_bytes:
+            return self._build_front_data()
+
+        # Guard against malformed frames (odd byte length), which would crash
+        # int16 decoding and restart the worker.
+        if len(pcm_bytes) % 2 != 0:
+            logger.warning(
+                "Skipping malformed PCM frame: session_id=%s byte_len=%s",
+                self.session_id,
+                len(pcm_bytes),
+            )
             return self._build_front_data()
 
         pcm_array = (

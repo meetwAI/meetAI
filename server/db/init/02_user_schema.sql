@@ -29,8 +29,8 @@ BEGIN
         id BIGSERIAL PRIMARY KEY,
         name TEXT,
         email TEXT UNIQUE NOT NULL,
-        user_name TEXT UNIQUE NOT NULL,
-        password TEXT NOT NULL
+        username TEXT UNIQUE NOT NULL,
+        password TEXT
     );
   ELSE
     -- Ensure columns exist
@@ -40,11 +40,35 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='email') THEN
       ALTER TABLE users ADD COLUMN email TEXT UNIQUE;
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='user_name') THEN
-      ALTER TABLE users ADD COLUMN user_name TEXT UNIQUE;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='username') THEN
+      ALTER TABLE users ADD COLUMN username TEXT;
     END IF;
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='password') THEN
       ALTER TABLE users ADD COLUMN password TEXT;
+    END IF;
+
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='user_name')
+       AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='username') THEN
+      UPDATE users
+      SET username = user_name
+      WHERE username IS NULL AND user_name IS NOT NULL;
+      ALTER TABLE users DROP COLUMN IF EXISTS user_name;
+    END IF;
+
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='user_name')
+       AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='username') THEN
+      ALTER TABLE users RENAME COLUMN user_name TO username;
+    END IF;
+
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='username') THEN
+      ALTER TABLE users ALTER COLUMN username SET NOT NULL;
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'users_username_key') THEN
+        ALTER TABLE users ADD CONSTRAINT users_username_key UNIQUE (username);
+      END IF;
+    END IF;
+
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='password') THEN
+      ALTER TABLE users ALTER COLUMN password DROP NOT NULL;
     END IF;
   END IF;
 END$$;
