@@ -38,12 +38,21 @@ class AudioBroker:
             stream_key, fields=fields, maxlen=self.stream_maxlen, approximate=True
         )
 
-    async def register_session(self, session_id: str, num_workers: int) -> str:
+    async def register_session(
+        self,
+        session_id: str,
+        num_workers: int,
+        *,
+        meeting_id: int = 0,
+        user_id: int = 0,
+    ) -> str:
         worker_id = self.worker_for_session(session_id, num_workers)
         stream_key = f"audio:worker:{worker_id}"
         fields = {
             "type": "register",
             "session_id": session_id,
+            "meeting_id": str(meeting_id),
+            "user_id": str(user_id),
         }
         return await self.redis.xadd(
             stream_key, fields=fields, maxlen=self.stream_maxlen, approximate=True
@@ -99,11 +108,19 @@ class AudioBroker:
                         fields.get(b"session_id") or fields.get("session_id")
                     )
                     pcm = self._as_bytes(fields.get(b"pcm") or fields.get("pcm"))
+                    meeting_id_raw = self._as_str(
+                        fields.get(b"meeting_id") or fields.get("meeting_id")
+                    )
+                    user_id_raw = self._as_str(
+                        fields.get(b"user_id") or fields.get("user_id")
+                    )
                     yield {
                         "id": last_id,
                         "type": event_type,
                         "session_id": session_id,
                         "pcm": pcm,
+                        "meeting_id": int(meeting_id_raw) if meeting_id_raw else 0,
+                        "user_id": int(user_id_raw) if user_id_raw else 0,
                     }
 
     async def consume_results(

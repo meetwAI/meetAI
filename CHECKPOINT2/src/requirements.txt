@@ -9,3 +9,7 @@ pydantic==2.10.6
 pydantic-settings==2.7.1
 requests==2.32.3
 nemo_toolkit[asr] @ git+https://github.com/NVIDIA/NeMo.git@main
+tiktoken==0.9.0
+asyncpg==0.30.0
+google-genai>=0.3.0
+sentence_transformers

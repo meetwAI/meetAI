@@ -4,10 +4,13 @@ import logging
 
 import numpy as np
 
+from src.core.config import settings
 from src.core.timed_objects import FrontData, Silence, State
+import time
 from src.engines.online_asr import OnlineASRProcessor
 from src.engines.vad import FixedVADIterator, OnnxWrapper
 from src.pipeline.tokens_alignment import TokensAlignment
+from src.pipeline.transcription_chunker import TranscriptionChunker
 
 
 MIN_DURATION_REAL_SILENCE = 5.0
@@ -30,6 +33,9 @@ class AudioPipeline:
         vad_session=None,
         vad_threshold: float = 0.5,
         use_vad: bool = True,
+        meeting_id: int = 0,
+        user_id: int = 0,
+        db_pool=None,
     ):
         self.session_id = session_id
         self.sample_rate = 16000
@@ -53,6 +59,15 @@ class AudioPipeline:
             self.state,
             _AlignmentArgs(diarization=bool(self.diarization)),
             self.transcription.asr.sep,
+        )
+        self.chunker = TranscriptionChunker(
+            tokenizer=asr.tokenizer,
+            window_seconds=settings.CHUNKING_WINDOW_SECONDS,
+            max_tokens=settings.MAX_CHUNK_TOKENS,
+            min_tokens=settings.MIN_CHUNK_TOKENS,
+            meeting_id=meeting_id,
+            user_id=user_id,
+            db_pool=db_pool,
         )
 
     async def process_audio(self, pcm_bytes: bytes) -> dict:
@@ -137,7 +152,12 @@ class AudioPipeline:
         if self.diarization:
             self.diarization.close()
 
-        return self._build_front_data()
+        final_data = self._build_front_data()
+        # Await the final chunk persist + topic-window flush so the worker
+        # cannot pop this pipeline before the trailing data is safely in
+        # Postgres. This is the WebSocket-close guarantee.
+        await self.chunker.flush()
+        return final_data
 
     def _handle_vad_event(self, event: dict) -> None:
         if "end" in event and not self.in_silence:
@@ -200,6 +220,7 @@ class AudioPipeline:
         if buffer_transcript.end is not None:
             candidate_end_times.append(buffer_transcript.end)
         self.state.end_buffer = max(candidate_end_times)
+        self.chunker.add_tokens(committed_tokens)
 
     def _build_front_data(self) -> dict:
         self.tokens_alignment.update()

@@ -171,6 +171,10 @@ class TokensAlignment:
                             max_overlap = intersec
                             max_overlap_speaker = diarization_segment.speaker + 1
                     punctuation_segment.speaker = max_overlap_speaker
+                    if punctuation_segment.tokens:
+                        for token in punctuation_segment.tokens:
+                            if not token.is_silence():
+                                token.speaker = max_overlap_speaker
 
         segments = []
         if punctuation_segments:

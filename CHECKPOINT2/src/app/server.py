@@ -77,7 +77,12 @@ async def websocket_asr(websocket: WebSocket):
     )
     broker: AudioBroker = app.state.broker
 
-    await broker.register_session(session_id, settings.NUM_WORKERS)
+    await broker.register_session(
+        session_id,
+        settings.NUM_WORKERS,
+        meeting_id=meeting_id,
+        user_id=user_id,
+    )
 
     await websocket.send_json(
         {

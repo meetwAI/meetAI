@@ -23,8 +23,21 @@ class Settings(BaseSettings):
     VAD_THRESHOLD: float = Field(default=0.5)
     VAD_FORCE_CPU: bool = Field(default=True)
 
+    MAX_CHUNK_TOKENS: int = Field(default=100)
+    MIN_CHUNK_TOKENS: int = Field(default=20)
+    CHUNKING_WINDOW_SECONDS: float = Field(default=30.0)
+    CHUNKER_ENCODER : str = Field(default="cl100k_base")
+
     NUM_WORKERS: int = Field(default=1)
     WORKER_ID: int = Field(default=0)
+
+    TOPIC_EXTRACTION_ENABLED: bool = Field(default=True)
+    TOPIC_WINDOW_SECONDS: float = Field(default=300.0)
+    TOPIC_SIMILARITY_THRESHOLD: float = Field(default=0.85)
+    GEMINI_API_KEY: str = Field(default="")
+    GEMINI_MODEL: str = Field(default="gemini-2.5-flash")
+
+    DATABASE_URL: str = Field(default="postgresql://meetai:meetai_pass@localhost:5433/meetai_dev")
 
     HOST: str = Field(default="0.0.0.0")
     PORT: int = Field(default=8000)

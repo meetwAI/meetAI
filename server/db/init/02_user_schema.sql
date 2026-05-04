@@ -87,18 +87,6 @@ CREATE TABLE IF NOT EXISTS meetings (
 );
 
 
--- =========================
--- MEETING_CHUNKS TABLE
--- =========================
-
-CREATE TABLE IF NOT EXISTS meeting_chunks (
-    id BIGSERIAL PRIMARY KEY,
-    meeting_id BIGINT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
-    chunk_index INT NOT NULL,
-    content TEXT,
-    embedding TEXT
-);
-
 
 -- =========================
 -- CHATS TABLE

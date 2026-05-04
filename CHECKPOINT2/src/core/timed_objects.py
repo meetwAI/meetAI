@@ -145,6 +145,7 @@ class Segment(TimedText):
                 end=end_token.end,
                 text=None,
                 speaker=-2,
+                tokens=tokens,
             )
 
         return cls(
@@ -153,6 +154,7 @@ class Segment(TimedText):
             text="".join(token.text for token in tokens),
             speaker=-1,
             detected_language=start_token.detected_language,
+            tokens=tokens,
         )
 
     def is_silence(self) -> bool:
