@@ -39,6 +39,10 @@ class Settings(BaseSettings):
 
     DATABASE_URL: str = Field(default="postgresql://meetai:meetai_pass@localhost:5433/meetai_dev")
 
+    EMBED_SERVICE_URL: str | None = Field(default=None)
+    EMBEDDER_PORT: int = Field(default=8200)
+    QA_PORT: int = Field(default=8100)
+
     HOST: str = Field(default="0.0.0.0")
     PORT: int = Field(default=8000)
     LOG_LEVEL: str = Field(default="INFO")

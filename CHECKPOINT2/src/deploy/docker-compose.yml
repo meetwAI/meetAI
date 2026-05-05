@@ -1,4 +1,4 @@
-﻿name: meetai
+name: meetai
 
 x-app-build: &app-build
   context: ..
@@ -8,6 +8,7 @@ x-common-env: &common-env
   REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
   NUM_WORKERS: ${NUM_WORKERS:-1}
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  EMBED_SERVICE_URL: http://embedder:8200
 
 services:
   redis:
@@ -46,3 +47,30 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+
+  embedder:
+    build: *app-build
+    # Start the server in the background, wait for it to be accessible,
+    # hit the warmup endpoint, and then wait for the server process.
+    command: >
+      sh -c "python3 -m src.embedder &
+      while ! curl -s http://localhost:8200/health > /dev/null; do sleep 1; done;
+      curl -X POST http://localhost:8200/warmup;
+      wait"
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      EMBEDDER_PORT: 8200
+    ports:
+      - "8200:8200"
+
+  qa:
+    build: *app-build
+    command: ["python3", "-m", "src.qa"]
+    restart: unless-stopped
+    environment:
+      <<: *common-env
+      QA_PORT: 8100
+      DATABASE_URL: ${DATABASE_URL:-postgresql://meetai:meetai_pass@postgres:5432/meetai_dev}
+    ports:
+      - "8100:8100"
