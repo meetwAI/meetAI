@@ -177,6 +177,38 @@ ORDER BY fused_score DESC
 LIMIT {chunk_limit_placeholder};
 """
 
+_FALLBACK_SQL_TEMPLATE = """
+WITH q AS (
+    SELECT $1::vector AS qv
+),
+candidate_chunks AS (
+    SELECT
+        c.chunk_id,
+        c.text,
+        c.speakers,
+        c.start_time,
+        c.end_time,
+        c.embedding AS chunk_emb
+    FROM meeting_chunks c
+    WHERE c.meeting_id = $2
+      AND c.embedding IS NOT NULL
+      {speaker_clause}
+      {time_clause}
+)
+SELECT
+    chunk_id,
+    text,
+    speakers,
+    start_time,
+    end_time,
+    NULL::bigint AS topic_id,
+    NULL::text AS topic,
+    1 - (chunk_emb <=> (SELECT qv FROM q)) AS fused_score
+FROM candidate_chunks
+ORDER BY fused_score DESC
+LIMIT {chunk_limit_placeholder};
+"""
+
 
 class QARetriever:
     """
@@ -254,10 +286,19 @@ class QARetriever:
             time_clause=time_clause,
             chunk_limit_placeholder=f"${chunk_limit_idx}",
         )
+        
+        fallback_sql = _FALLBACK_SQL_TEMPLATE.format(
+            speaker_clause=speaker_clause,
+            time_clause=time_clause,
+            chunk_limit_placeholder=f"${chunk_limit_idx}",
+        )
 
         try:
             async with self._pool.acquire() as conn:
                 rows = await conn.fetch(sql, *params)
+                if not rows:
+                    logger.info("No chunks found using topic fusion. Falling back to simple chunk retrieval for meeting_id=%s", meeting_id)
+                    rows = await conn.fetch(fallback_sql, *params)
         except Exception:
             logger.exception(
                 "QARetriever: SQL failed for meeting_id=%s (speakers=%s, "
@@ -281,8 +322,12 @@ class QARetriever:
                     end_time=(
                         float(r["end_time"]) if r["end_time"] is not None else None
                     ),
-                    topic_id=int(r["topic_id"]),
-                    topic=str(r["topic"]),
+                    topic_id=(
+                        int(r["topic_id"]) if r["topic_id"] is not None else None
+                    ),
+                    topic=(
+                        str(r["topic"]) if r["topic"] is not None else None
+                    ),
                     fused_score=float(r["fused_score"]),
                 )
             )

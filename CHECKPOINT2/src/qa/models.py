@@ -60,8 +60,8 @@ class RetrievedChunk(BaseModel):
     speakers: List[str] = Field(default_factory=list)
     start_time: Optional[float] = None
     end_time: Optional[float] = None
-    topic_id: int
-    topic: str
+    topic_id: Optional[int] = None
+    topic: Optional[str] = None
     fused_score: float
 
 
