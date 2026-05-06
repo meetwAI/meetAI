@@ -384,6 +384,14 @@ const verifyAccess = (req, res, next) => {
 // Meeting service proxy
 // ---------------------------------------------------------------------------
 
+// Forward a request to the meeting service. Two response modes:
+//   - JSON / regular: buffer the body and forward at the end (default).
+//   - text/event-stream: pipe the upstream response through to the client
+//     unbuffered so SSE deltas arrive in real time. The QA path of
+//     POST /meetings/:id/messages relies on this — without the streaming
+//     branch, every token would queue up here until the upstream stream
+//     closed, which is exactly the "answer in one bulk" failure mode the
+//     SSE design is meant to avoid.
 const proxyMeetingService = (method, path, req, res) => {
   const targetUrl = new URL(path, MEETING_SERVICE_URL);
   const client = targetUrl.protocol === 'https:' ? https : http;
@@ -422,7 +430,11 @@ const proxyMeetingService = (method, path, req, res) => {
 
   proxyReq.on('error', (error) => {
     console.error('[gateway] meeting service proxy error', error);
-    res.status(502).json({ message: 'Meeting service unavailable.' });
+    if (!res.headersSent) {
+      res.status(502).json({ message: 'Meeting service unavailable.' });
+    } else if (!res.writableEnded) {
+      res.end();
+    }
   });
 
   if (hasBody) {
