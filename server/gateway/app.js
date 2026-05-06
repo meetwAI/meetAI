@@ -355,14 +355,30 @@ const verifyAccess = (req, res, next) => {
 // Meeting service proxy
 // ---------------------------------------------------------------------------
 
+// Forward a request to the meeting service. Two response modes:
+//   - JSON / regular: buffer the body and forward at the end (default).
+//   - text/event-stream: pipe the upstream response through to the client
+//     unbuffered so SSE deltas arrive in real time. The QA path of
+//     POST /meetings/:id/messages relies on this — without the streaming
+//     branch, every token would queue up here until the upstream stream
+//     closed, which is exactly the "answer in one bulk" failure mode the
+//     SSE design is meant to avoid.
 const proxyMeetingService = (method, path, req, res) => {
   const targetUrl = new URL(path, MEETING_SERVICE_URL);
   const client = targetUrl.protocol === 'https:' ? https : http;
   const hasBody = method === 'POST' || method === 'PATCH';
   const body = hasBody ? JSON.stringify(req.body || {}) : null;
 
+  // Forward the client's Accept header so the meeting service knows when
+  // the browser wants SSE; default to application/json for the existing
+  // routes that have always returned JSON.
+  const clientAccept = String(req.headers['accept'] || '').toLowerCase();
+  const wantsSse =
+    clientAccept.includes('text/event-stream') ||
+    (req.body && req.body.mode === 'qa');
+
   const headers = {
-    Accept: 'application/json',
+    Accept: wantsSse ? 'text/event-stream' : 'application/json',
     Authorization: req.authToken ? `Bearer ${req.authToken}` : '',
     'x-user-id': req.authUser?.id ? String(req.authUser.id) : '',
   };
@@ -376,6 +392,51 @@ const proxyMeetingService = (method, path, req, res) => {
     targetUrl,
     { method, headers },
     (proxyRes) => {
+      const upstreamType = String(
+        proxyRes.headers['content-type'] || 'application/json',
+      );
+      const isStream = upstreamType.toLowerCase().includes('text/event-stream');
+
+      if (isStream) {
+        // Pipe-through path: forward headers verbatim, including the
+        // anti-buffering hints, and stream the body bytes as they arrive.
+        res.status(proxyRes.statusCode || 200);
+        res.setHeader('Content-Type', upstreamType);
+        res.setHeader(
+          'Cache-Control',
+          proxyRes.headers['cache-control'] || 'no-cache, no-transform',
+        );
+        res.setHeader('Connection', 'keep-alive');
+        res.setHeader('X-Accel-Buffering', 'no');
+        if (typeof res.flushHeaders === 'function') {
+          res.flushHeaders();
+        }
+
+        proxyRes.on('data', (chunk) => {
+          res.write(chunk);
+        });
+        proxyRes.on('end', () => {
+          if (!res.writableEnded) {
+            res.end();
+          }
+        });
+        proxyRes.on('error', (error) => {
+          console.error('[gateway] upstream stream error', error);
+          if (!res.writableEnded) {
+            res.end();
+          }
+        });
+        // If the browser disconnects, abort the upstream so we don't keep
+        // pulling tokens nobody is reading.
+        req.on('close', () => {
+          if (!res.writableEnded) {
+            proxyReq.destroy();
+          }
+        });
+        return;
+      }
+
+      // Buffered JSON path — preserves the historical behaviour.
       let data = '';
       proxyRes.on('data', (chunk) => {
         data += chunk;
@@ -383,7 +444,7 @@ const proxyMeetingService = (method, path, req, res) => {
       proxyRes.on('end', () => {
         res
           .status(proxyRes.statusCode || 200)
-          .set('content-type', proxyRes.headers['content-type'] || 'application/json')
+          .set('content-type', upstreamType)
           .send(data);
       });
     },
@@ -391,7 +452,11 @@ const proxyMeetingService = (method, path, req, res) => {
 
   proxyReq.on('error', (error) => {
     console.error('[gateway] meeting service proxy error', error);
-    res.status(502).json({ message: 'Meeting service unavailable.' });
+    if (!res.headersSent) {
+      res.status(502).json({ message: 'Meeting service unavailable.' });
+    } else if (!res.writableEnded) {
+      res.end();
+    }
   });
 
   if (hasBody) {
