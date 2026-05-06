@@ -397,11 +397,14 @@ const proxyMeetingService = (method, path, req, res) => {
   const client = targetUrl.protocol === 'https:' ? https : http;
   const hasBody = method === 'POST' || method === 'PATCH';
   const body = hasBody ? JSON.stringify(req.body || {}) : null;
-
-  const headers = { ...req.headers };
+  const clientAccept = String(req.headers['accept'] || '').toLowerCase();
+  const wantsSse =
+    clientAccept.includes('text/event-stream') ||
+    (req.body && req.body.mode === 'qa');
+  const headers = { ...req.headers}
   delete headers.host;
   delete headers['content-length'];
-  headers.Accept = 'application/json';
+  headers.Accept =  wantsSse ? 'text/event-stream' : 'application/json';
   headers.Authorization = req.authToken ? `Bearer ${req.authToken}` : (req.headers.authorization || '');
   headers['x-user-id'] = req.authUser?.id ? String(req.authUser.id) : '';
 
@@ -414,6 +417,51 @@ const proxyMeetingService = (method, path, req, res) => {
     targetUrl,
     { method, headers, rejectUnauthorized: false },
     (proxyRes) => {
+        const upstreamType = String(
+        proxyRes.headers['content-type'] || 'application/json',
+      );
+      const isStream = upstreamType.toLowerCase().includes('text/event-stream');
+
+      if (isStream) {
+        // Pipe-through path: forward headers verbatim, including the
+        // anti-buffering hints, and stream the body bytes as they arrive.
+        res.status(proxyRes.statusCode || 200);
+        res.setHeader('Content-Type', upstreamType);
+        res.setHeader(
+          'Cache-Control',
+          proxyRes.headers['cache-control'] || 'no-cache, no-transform',
+        );
+        res.setHeader('Connection', 'keep-alive');
+        res.setHeader('X-Accel-Buffering', 'no');
+        if (typeof res.flushHeaders === 'function') {
+          res.flushHeaders();
+        }
+
+        proxyRes.on('data', (chunk) => {
+          res.write(chunk);
+        });
+        proxyRes.on('end', () => {
+          if (!res.writableEnded) {
+            res.end();
+          }
+        });
+        proxyRes.on('error', (error) => {
+          console.error('[gateway] upstream stream error', error);
+          if (!res.writableEnded) {
+            res.end();
+          }
+        });
+        // If the browser disconnects, abort the upstream so we don't keep
+        // pulling tokens nobody is reading.
+        req.on('close', () => {
+          if (!res.writableEnded) {
+            proxyReq.destroy();
+          }
+        });
+        return;
+      }
+
+      // Buffered JSON path — preserves the historical behaviour.
       const chunks = [];
       proxyRes.on('data', (chunk) => {
         chunks.push(chunk);
@@ -422,7 +470,7 @@ const proxyMeetingService = (method, path, req, res) => {
         const responseBody = Buffer.concat(chunks);
         res
           .status(proxyRes.statusCode || 200)
-          .set('content-type', proxyRes.headers['content-type'] || 'application/json')
+          .set('content-type', upstreamType)
           .send(responseBody);
       });
     },
@@ -431,7 +479,7 @@ const proxyMeetingService = (method, path, req, res) => {
   proxyReq.on('error', (error) => {
     console.error('[gateway] meeting service proxy error', error);
     if (!res.headersSent) {
-      res.status(502).json({ message: 'Meeting service unavailable.' });
+      res.status(502).json({ message: 'Meeting service unavailable.' }); 
     } else if (!res.writableEnded) {
       res.end();
     }
