@@ -35,7 +35,7 @@ const refreshGoogleAccessToken = async (refreshToken) => {
       statusCode: 401,
     });
   }
-
+  
   const { clientId, clientSecret } = getGoogleClientConfig();
 
   const body = new URLSearchParams({
@@ -47,6 +47,7 @@ const refreshGoogleAccessToken = async (refreshToken) => {
 
   let tokenResponse;
   try {
+    
     tokenResponse = await fetch(GOOGLE_TOKEN_URL, {
       method: 'POST',
       headers: {
@@ -101,6 +102,41 @@ const normalizeEventDate = (value) => ({
   timeZone: normalizeText(value?.timeZone) || null,
 });
 
+const normalizeAttendee = (attendee) => ({
+  email: normalizeText(attendee?.email) || null,
+  displayName: normalizeText(attendee?.displayName) || null,
+  responseStatus: normalizeText(attendee?.responseStatus) || null,
+  self: Boolean(attendee?.self),
+});
+
+const normalizeConferenceData = (conferenceData) => {
+  if (!conferenceData) {
+    return null;
+  }
+
+  const entryPoints = Array.isArray(conferenceData?.entryPoints)
+    ? conferenceData.entryPoints
+        .map((entry) => ({
+          entryPointType: normalizeText(entry?.entryPointType) || null,
+          uri: normalizeText(entry?.uri) || null,
+          label: normalizeText(entry?.label) || null,
+        }))
+        .filter((entry) => entry.entryPointType || entry.uri || entry.label)
+    : [];
+  const solutionName = normalizeText(conferenceData?.conferenceSolution?.name) || null;
+  const conferenceId = normalizeText(conferenceData?.conferenceId) || null;
+
+  if (!entryPoints.length && !solutionName && !conferenceId) {
+    return null;
+  }
+
+  return {
+    entryPoints,
+    conferenceSolution: solutionName ? { name: solutionName } : null,
+    conferenceId,
+  };
+};
+
 const normalizeEvent = (event) => {
   const start = normalizeEventDate(event?.start);
   const end = normalizeEventDate(event?.end);
@@ -112,11 +148,14 @@ const normalizeEvent = (event) => {
     description: normalizeText(event?.description) || null,
     location: normalizeText(event?.location) || null,
     htmlLink: normalizeText(event?.htmlLink) || null,
+    hangoutLink: normalizeText(event?.hangoutLink) || null,
     start,
     end,
     isAllDay: Boolean(start.date && !start.dateTime),
     creatorEmail: normalizeText(event?.creator?.email) || null,
     organizerEmail: normalizeText(event?.organizer?.email) || null,
+    attendees: Array.isArray(event?.attendees) ? event.attendees.map(normalizeAttendee) : [],
+    conferenceData: normalizeConferenceData(event?.conferenceData),
   };
 };
 
@@ -125,10 +164,17 @@ const listGoogleCalendarEvents = async ({ accessToken, timeMin, timeMax, maxResu
   url.searchParams.set('singleEvents', 'true');
   url.searchParams.set('orderBy', 'startTime');
   url.searchParams.set('maxResults', String(maxResults || 25));
+  url.searchParams.set('conferenceDataVersion', '1');
 
-  if (timeMin) {
-    url.searchParams.set('timeMin', timeMin);
-  }
+  // Default timeMin to 1 year ago so past meetings are included when no range is set.
+  // Without this, Google returns only future events by default.
+  const effectiveTimeMin = timeMin || (() => {
+    const d = new Date();
+    d.setFullYear(d.getFullYear() - 1);
+    return d.toISOString();
+  })();
+  url.searchParams.set('timeMin', effectiveTimeMin);
+
   if (timeMax) {
     url.searchParams.set('timeMax', timeMax);
   }
@@ -152,6 +198,12 @@ const listGoogleCalendarEvents = async ({ accessToken, timeMin, timeMax, maxResu
   const payload = await parseJsonSafely(response);
 
   if (!response.ok) {
+    if (response.status === 401 || response.status === 403) {
+      throw new GoogleCalendarServiceError('Google Calendar access was denied.', {
+        code: 'google-calendar-access-denied',
+        statusCode: 401,
+      });
+    }
     throw new GoogleCalendarServiceError('Google Calendar API request failed.', {
       code: 'google-calendar-fetch-failed',
       statusCode: 502,
@@ -167,6 +219,7 @@ const listGoogleCalendarEvents = async ({ accessToken, timeMin, timeMax, maxResu
 };
 
 const fetchCalendarEvents = async ({ refreshToken, timeMin, timeMax, maxResults }) => {
+  
   const refreshed = await refreshGoogleAccessToken(refreshToken);
   const eventsResult = await listGoogleCalendarEvents({
     accessToken: refreshed.accessToken,
@@ -181,7 +234,23 @@ const fetchCalendarEvents = async ({ refreshToken, timeMin, timeMax, maxResults 
   };
 };
 
+const validateGoogleCalendarAccess = async ({ refreshToken }) => {
+  const refreshed = await refreshGoogleAccessToken(refreshToken);
+  const timeMin = new Date().toISOString();
+
+  await listGoogleCalendarEvents({
+    accessToken: refreshed.accessToken,
+    timeMin,
+    maxResults: 1,
+  });
+
+  return {
+    accessTokenExpiry: refreshed.accessTokenExpiry,
+  };
+};
+
 module.exports = {
   fetchCalendarEvents,
+  validateGoogleCalendarAccess,
   GoogleCalendarServiceError,
 };

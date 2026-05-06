@@ -2,6 +2,20 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { disconnectSocket } from '../api/socketClient';
 import { fetchWithAuth } from '../api/fetchWithAuth';
+import {
+  User,
+  Mail,
+  Phone,
+  MapPin,
+  Calendar,
+  LogOut,
+  Save,
+  RefreshCw,
+  CheckCircle2,
+  AlertCircle,
+  Hash,
+} from 'lucide-react';
+import './Profile.css';
 
 export default function Profile() {
   const API_URL = import.meta.env.VITE_AUTH_URL || import.meta.env.VITE_API_URL;
@@ -24,10 +38,12 @@ export default function Profile() {
   const [saving, setSaving] = useState(false);
   const [calendarConnected, setCalendarConnected] = useState(false);
   const [calendarStatusLoading, setCalendarStatusLoading] = useState(true);
+  const [calendarVerified, setCalendarVerified] = useState(false);
+  const [calendarUnavailable, setCalendarUnavailable] = useState(false);
+  const [calendarStatusTick, setCalendarStatusTick] = useState(0);
+  const [isGoogleAccount, setIsGoogleAccount] = useState(false);
 
   useEffect(() => {
-    let active = true;
-
     const params = new URLSearchParams(window.location.search);
     const calendarState = params.get('calendar');
     const reason = params.get('reason');
@@ -46,18 +62,28 @@ export default function Profile() {
     if (calendarState) {
       navigate('/profile', { replace: true });
     }
+  }, [navigate]);
+
+  useEffect(() => {
+    let active = true;
 
     const loadCalendarStatus = async () => {
       setCalendarStatusLoading(true);
+      setCalendarUnavailable(false);
       try {
-        const response = await fetchWithAuth('/calendar/status');
+        const response = await fetchWithAuth('/calendar/status?validate=1');
         const payload = await response.json().catch(() => ({}));
         if (active) {
           setCalendarConnected(Boolean(payload?.connected));
+          setCalendarVerified(Boolean(payload?.verified));
+          setCalendarUnavailable(Boolean(payload?.unavailable));
+          setIsGoogleAccount(Boolean(payload?.isGoogleAccount));
         }
       } catch {
         if (active) {
           setCalendarConnected(false);
+          setCalendarVerified(false);
+          setCalendarUnavailable(true);
         }
       } finally {
         if (active) {
@@ -71,7 +97,7 @@ export default function Profile() {
     return () => {
       active = false;
     };
-  }, [navigate]);
+  }, [calendarStatusTick]);
 
   const handleLogout = async () => {
     try {
@@ -149,104 +175,187 @@ export default function Profile() {
   };
 
   const handleConnectGoogleCalendar = () => {
-    window.location.href = `${API_URL}/auth/google/calendar`;
+    // Stay on profile page after connection
+    window.location.href = `${API_URL}/auth/google/calendar?redirect=${encodeURIComponent('/profile')}`;
   };
 
+  const handleRetryCalendarStatus = () => {
+    setCalendarStatusTick((tick) => tick + 1);
+  };
+
+  const calendarMessage = calendarStatusLoading
+    ? 'Checking Google Calendar access...'
+    : calendarUnavailable
+      ? 'Google Calendar is temporarily unreachable. Your connection may still be valid — try again shortly.'
+      : calendarConnected && calendarVerified
+        ? 'Connected. Calendar access verified.'
+        : !calendarConnected && isGoogleAccount
+          ? 'Your Google Calendar access has expired or been revoked. Reconnect to restore it.'
+          : !calendarConnected
+            ? 'Not connected yet. Connect when you are ready.'
+            : 'Connected. Verifying access...';
+
+  const shouldConnectCalendar = !calendarConnected && !calendarUnavailable;
+  const shouldRetryCalendar = !calendarConnected && calendarUnavailable;
+  const calendarActionLabel = calendarStatusLoading
+    ? 'Checking...'
+    : calendarConnected && calendarVerified
+      ? 'Google Calendar connected'
+      : calendarConnected
+        ? 'Verifying access...'
+        : shouldRetryCalendar
+          ? 'Retry'
+          : isGoogleAccount
+            ? 'Reconnect Google Calendar'
+            : 'Connect Google Calendar';
+  const calendarActionHandler = shouldConnectCalendar
+    ? handleConnectGoogleCalendar
+    : shouldRetryCalendar
+      ? handleRetryCalendarStatus
+      : undefined;
+  const calendarActionDisabled = calendarStatusLoading || calendarConnected;
+
   return (
-    <div className="profile-page" style={{ animation: 'fadeIn 0.5s ease-out both' }}>
-      <div className="profile-header">
-        <div>
+    <div className="profile-container">
+      <header className="profile-header-v2">
+        <div className="profile-title-group">
           <h1>Profile</h1>
-          <p>Manage your personal details.</p>
+          <p>Manage your personal information and connections.</p>
         </div>
-        <button type="button" className="primary-button" onClick={handleLogout}>
+        <button type="button" className="logout-btn" onClick={handleLogout}>
+          <LogOut size={18} />
           Log out
         </button>
-      </div>
+      </header>
 
-      <form className="profile-card" onSubmit={handleSaveProfile}>
-        <div className="profile-grid">
-          <label className="profile-field">
-            <span>Name</span>
-            <input
-              type="text"
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              placeholder="Your full name"
-            />
-          </label>
+      <section className="profile-card-v2">
+        <h2>
+          <User size={20} className="text-primary" />
+          Personal Details
+        </h2>
+        <form className="profile-form" onSubmit={handleSaveProfile}>
+          <div className="profile-form-grid">
+            <div className="input-group-v2">
+              <label htmlFor="profile-name">Full Name</label>
+              <div className="input-wrapper-v2">
+                <User size={18} className="input-icon-v2" />
+                <input
+                  id="profile-name"
+                  type="text"
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  placeholder="Your full name"
+                />
+              </div>
+            </div>
 
-          <label className="profile-field">
-            <span>Username</span>
-            <input type="text" value={user?.username || ''} disabled readOnly />
-          </label>
+            <div className="input-group-v2">
+              <label>Username</label>
+              <div className="input-wrapper-v2">
+                <Hash size={18} className="input-icon-v2" />
+                <input type="text" value={user?.username || ''} disabled readOnly />
+              </div>
+            </div>
 
-          <label className="profile-field">
-            <span>Email</span>
-            <input type="email" value={user?.email || 'Not available yet'} disabled readOnly />
-          </label>
+            <div className="input-group-v2">
+              <label>Email Address</label>
+              <div className="input-wrapper-v2">
+                <Mail size={18} className="input-icon-v2" />
+                <input type="email" value={user?.email || 'Not available'} disabled readOnly />
+              </div>
+            </div>
 
-          <label className="profile-field">
-            <span>Age</span>
-            <input
-              type="number"
-              value={age}
-              onChange={(event) => setAge(event.target.value)}
-              min="0"
-              max="150"
-              placeholder="e.g. 28"
-            />
-          </label>
+            <div className="input-group-v2">
+              <label htmlFor="profile-age">Age</label>
+              <div className="input-wrapper-v2">
+                <Hash size={18} className="input-icon-v2" />
+                <input
+                  id="profile-age"
+                  type="number"
+                  value={age}
+                  onChange={(event) => setAge(event.target.value)}
+                  min="0"
+                  max="150"
+                  placeholder="e.g. 28"
+                />
+              </div>
+            </div>
 
-          <label className="profile-field">
-            <span>Phone Number</span>
-            <input
-              type="tel"
-              value={phone}
-              onChange={(event) => setPhone(event.target.value)}
-              placeholder="e.g. +1 555 000 0000"
-            />
-          </label>
+            <div className="input-group-v2">
+              <label htmlFor="profile-phone">Phone Number</label>
+              <div className="input-wrapper-v2">
+                <Phone size={18} className="input-icon-v2" />
+                <input
+                  id="profile-phone"
+                  type="tel"
+                  value={phone}
+                  onChange={(event) => setPhone(event.target.value)}
+                  placeholder="e.g. +1 555 000 0000"
+                />
+              </div>
+            </div>
 
-          <label className="profile-field">
-            <span>Location</span>
-            <input
-              type="text"
-              value={location}
-              onChange={(event) => setLocation(event.target.value)}
-              placeholder="City, Country"
-            />
-          </label>
-        </div>
+            <div className="input-group-v2">
+              <label htmlFor="profile-location">Location</label>
+              <div className="input-wrapper-v2">
+                <MapPin size={18} className="input-icon-v2" />
+                <input
+                  id="profile-location"
+                  type="text"
+                  value={location}
+                  onChange={(event) => setLocation(event.target.value)}
+                  placeholder="City, Country"
+                />
+              </div>
+            </div>
+          </div>
 
-        {error ? <p className="profile-error">{error}</p> : null}
-        {status ? <p className="profile-success">{status}</p> : null}
+          <div className="profile-status-messages">
+            {error && (
+              <div className="status-msg error">
+                <AlertCircle size={18} />
+                {error}
+              </div>
+            )}
+            {status && (
+              <div className="status-msg success">
+                <CheckCircle2 size={18} />
+                {status}
+              </div>
+            )}
+          </div>
 
-        <div className="profile-actions">
-          <button type="submit" className="primary-button" disabled={saving}>
-            {saving ? 'Saving...' : 'Save changes'}
-          </button>
-        </div>
-      </form>
+          <div className="save-actions">
+            <button type="submit" className="save-btn" disabled={saving}>
+              {saving ? <RefreshCw size={18} className="animate-spin" /> : <Save size={18} />}
+              {saving ? 'Saving...' : 'Save changes'}
+            </button>
+          </div>
+        </form>
+      </section>
 
-      <section className="profile-card profile-calendar-card" aria-live="polite">
-        <div className="profile-calendar-copy">
-          <h2>Google Calendar Access</h2>
-          <p>
-            {calendarStatusLoading
-              ? 'Checking Google Calendar connection...'
-              : calendarConnected
-                ? 'Connected. You can use calendar and meetings access when needed.'
-                : 'Not connected yet. Connect when you are ready.'}
-          </p>
+      <section className="calendar-card-v2" aria-live="polite">
+        <div className="calendar-info">
+          <h2>
+            <Calendar size={20} style={{ color: '#38bdf8', marginRight: '8px', verticalAlign: 'middle' }} />
+            Google Calendar Access
+          </h2>
+          <p>{calendarMessage}</p>
         </div>
         <button
           type="button"
-          className="primary-button"
-          onClick={handleConnectGoogleCalendar}
-          disabled={calendarStatusLoading}
+          className={`calendar-btn ${calendarConnected && calendarVerified ? 'connected' : 'connect'}`}
+          onClick={calendarActionHandler}
+          disabled={calendarActionDisabled}
         >
-          {calendarConnected ? 'Reconnect Google Calendar' : 'Connect Google Calendar'}
+          {calendarStatusLoading ? (
+            <RefreshCw size={18} className="animate-spin" />
+          ) : calendarConnected && calendarVerified ? (
+            <CheckCircle2 size={18} />
+          ) : (
+            <Calendar size={18} />
+          )}
+          {calendarActionLabel}
         </button>
       </section>
     </div>

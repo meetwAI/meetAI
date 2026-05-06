@@ -1,5 +1,6 @@
 const http = require('http');
 const https = require('https');
+const fs = require('fs');
 const express = require('express');
 const cors = require('cors');
 const { Server } = require('socket.io');
@@ -12,6 +13,7 @@ const MEETING_SERVICE_URL = requireEnv('MEETING_SERVICE_URL');
 const AUTH_SERVICE_URL = requireEnv('AUTH_SERVICE_URL');
 const FRONTEND_ORIGIN = requireEnv('FRONTEND_ORIGIN');
 const AI_SERVICE_WS_URL = process.env.AI_SERVICE_WS_URL || 'ws://localhost:8000/asr';
+const useHttps = process.env.AUTH_USE_HTTPS === 'true';
 
 const app = express();
 app.use(
@@ -22,6 +24,20 @@ app.use(
   }),
 );
 app.use(express.json());
+app.use((req, res, next) => {
+  const start = Date.now();
+  const { method, path } = req;
+  
+  // Capture the original send to log the response
+  const originalSend = res.send;
+  res.send = function(body) {
+    const duration = Date.now() - start;
+    console.log(`[gateway] ${method} ${path} -> ${res.statusCode} (${duration}ms) - Body length: ${body ? body.length : 0}`);
+    return originalSend.apply(res, arguments);
+  };
+  
+  next();
+});
 
 const parseCookieHeader = (cookieHeader = '') => {
   const parts = String(cookieHeader || '').split(';');
@@ -82,6 +98,7 @@ const verifySocketUser = ({ bearerToken, cookieHeader }) =>
       targetUrl,
       {
         method: 'POST',
+        rejectUnauthorized: false,
         headers: {
           Authorization: bearerToken ? `Bearer ${bearerToken}` : '',
           Cookie: cookieHeader,
@@ -126,6 +143,7 @@ const ensureMeetingOwnership = ({ meetingId, userId, authToken }) =>
       targetUrl,
       {
         method: 'GET',
+        rejectUnauthorized: false,
         headers: {
           Accept: 'application/json',
           Authorization: authToken ? `Bearer ${authToken}` : '',
@@ -178,10 +196,12 @@ const proxyAuth = (path, req, res, extraHeaders = {}) => {
   const hasBody = req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH';
   const body = hasBody ? JSON.stringify(req.body || {}) : null;
 
-  const headers = {
-    Cookie: req.headers.cookie || '',
-    ...extraHeaders,
-  };
+  const headers = { ...req.headers };
+  delete headers.host;
+  delete headers['content-length'];
+  Object.assign(headers, extraHeaders);
+  // Ensure Cookie is forwarded if not already in req.headers
+  if (req.headers.cookie) headers.Cookie = req.headers.cookie;
 
   if (hasBody) {
     headers['Content-Type'] = 'application/json';
@@ -192,14 +212,16 @@ const proxyAuth = (path, req, res, extraHeaders = {}) => {
     targetUrl,
     {
       method: req.method,
+      rejectUnauthorized: false,
       headers,
     },
     (proxyRes) => {
-      let data = '';
+      const chunks = [];
       proxyRes.on('data', (chunk) => {
-        data += chunk;
+        chunks.push(chunk);
       });
       proxyRes.on('end', () => {
+        const responseBody = Buffer.concat(chunks);
         if (proxyRes.headers['set-cookie']) {
           res.set('set-cookie', proxyRes.headers['set-cookie']);
         }
@@ -209,7 +231,7 @@ const proxyAuth = (path, req, res, extraHeaders = {}) => {
         res
           .status(proxyRes.statusCode || 200)
           .set('content-type', proxyRes.headers['content-type'] || 'application/json')
-          .send(data);
+          .send(responseBody);
       });
     },
   );
@@ -262,6 +284,7 @@ const verifyAccess = (req, res, next) => {
       refreshUrl,
       {
         method: 'POST',
+        rejectUnauthorized: false,
         headers: {
           Cookie: req.headers.cookie || '',
         },
@@ -308,21 +331,27 @@ const verifyAccess = (req, res, next) => {
     targetUrl,
     {
       method: 'POST',
-      headers: {
-        Authorization: authHeader,
-        Cookie: req.headers.cookie || '',
-      },
+      rejectUnauthorized: false,
+      headers: (() => {
+        const h = { ...req.headers };
+        delete h.host;
+        h.Authorization = authHeader;
+        h.Cookie = req.headers.cookie || '';
+        h['Content-Length'] = '0';
+        return h;
+      })(),
     },
     (proxyRes) => {
-      let data = '';
+      const chunks = [];
       proxyRes.on('data', (chunk) => {
-        data += chunk;
+        chunks.push(chunk);
       });
       proxyRes.on('end', () => {
         if (proxyRes.statusCode !== 200) {
           return refreshSession();
         }
 
+        const data = Buffer.concat(chunks).toString();
         let verifiedUser = null;
         try {
           const parsed = JSON.parse(data || '{}');
@@ -361,30 +390,32 @@ const proxyMeetingService = (method, path, req, res) => {
   const hasBody = method === 'POST' || method === 'PATCH';
   const body = hasBody ? JSON.stringify(req.body || {}) : null;
 
-  const headers = {
-    Accept: 'application/json',
-    Authorization: req.authToken ? `Bearer ${req.authToken}` : '',
-    'x-user-id': req.authUser?.id ? String(req.authUser.id) : '',
-  };
+  const headers = { ...req.headers };
+  delete headers.host;
+  delete headers['content-length'];
+  headers.Accept = 'application/json';
+  headers.Authorization = req.authToken ? `Bearer ${req.authToken}` : (req.headers.authorization || '');
+  headers['x-user-id'] = req.authUser?.id ? String(req.authUser.id) : '';
 
   if (hasBody) {
-    headers['Content-Type'] = 'application/json';
+    headers['Content-Type'] = req.headers['content-type'] || 'application/json';
     headers['Content-Length'] = Buffer.byteLength(body);
   }
 
   const proxyReq = client.request(
     targetUrl,
-    { method, headers },
+    { method, headers, rejectUnauthorized: false },
     (proxyRes) => {
-      let data = '';
+      const chunks = [];
       proxyRes.on('data', (chunk) => {
-        data += chunk;
+        chunks.push(chunk);
       });
       proxyRes.on('end', () => {
+        const responseBody = Buffer.concat(chunks);
         res
           .status(proxyRes.statusCode || 200)
           .set('content-type', proxyRes.headers['content-type'] || 'application/json')
-          .send(data);
+          .send(responseBody);
       });
     },
   );
@@ -414,6 +445,7 @@ app.get('/auth/google', (req, res) => proxyAuth(req.originalUrl, req, res));
 app.get('/auth/google/calendar', verifyAccess, (req, res) =>
   proxyAuth('/auth/google/calendar', req, res, {
     'x-user-id': req.authUser?.id ? String(req.authUser.id) : '',
+    'x-auth-provider': req.authUser?.authProvider ? String(req.authUser.authProvider) : '',
   }),
 );
 app.get('/auth/google/callback', (req, res) => proxyAuth(req.originalUrl, req, res));
@@ -421,13 +453,20 @@ app.get('/auth/google/callback', (req, res) => proxyAuth(req.originalUrl, req, r
 app.use(verifyAccess); // verification required for all routes below
 
 app.get('/calendar/status', (req, res) => {
-  const targetUrl = new URL('/calendar/status', AUTH_SERVICE_URL);
+  console.log('[gateway] /calendar/status req.query:', JSON.stringify(req.query));
+  const params = new URLSearchParams(req.query || {});
+  const queryString = params.toString();
+  console.log('[gateway] /calendar/status queryString:', queryString);
+  const targetPath = queryString ? `/calendar/status?${queryString}` : '/calendar/status';
+  const targetUrl = new URL(targetPath, AUTH_SERVICE_URL);
+  console.log('[gateway] /calendar/status targetUrl:', targetUrl.toString());
   const client = targetUrl.protocol === 'https:' ? https : http;
 
   const proxyReq = client.request(
     targetUrl,
     {
       method: 'GET',
+      rejectUnauthorized: false,
       headers: {
         Accept: 'application/json',
         'x-user-id': req.authUser?.id ? String(req.authUser.id) : '',
@@ -466,6 +505,7 @@ app.get('/calendar/events', (req, res) => {
     targetUrl,
     {
       method: 'GET',
+      rejectUnauthorized: false,
       headers: {
         Accept: 'application/json',
         'x-user-id': req.authUser?.id ? String(req.authUser.id) : '',
@@ -503,6 +543,7 @@ app.post('/profile', (req, res) => {
     targetUrl,
     {
       method: 'POST',
+      rejectUnauthorized: false,
       headers: {
         'Content-Type': 'application/json',
         'Content-Length': Buffer.byteLength(body),
@@ -573,7 +614,19 @@ app.delete('/meetings/:meetingId', (req, res) =>
 // Socket.io — bridge browser PCM stream to AI websocket service
 // ---------------------------------------------------------------------------
 
-const server = http.createServer(app);
+let server;
+if (useHttps) {
+  server = https.createServer(
+    {
+      key: fs.readFileSync('localhost-key.pem'),
+      cert: fs.readFileSync('localhost.pem'),
+    },
+    app
+  );
+} else {
+  server = http.createServer(app);
+}
+
 const io = new Server(server, {
   cors: {
     origin: [FRONTEND_ORIGIN],
@@ -840,6 +893,7 @@ io.on('connection', (socket) => {
 });
 
 server.listen(PORT, () => {
+  const protocol = useHttps ? 'HTTPS' : 'HTTP';
   // eslint-disable-next-line no-console
-  console.log(`Gateway listening on ${PORT}`);
+  console.log(`${protocol} Gateway listening on ${PORT}`);
 });

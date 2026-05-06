@@ -23,9 +23,10 @@ import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import List
-
+import torch
 import numpy as np
 from sentence_transformers import SentenceTransformer
+from src.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -45,9 +46,19 @@ def _get_model_and_tokenizer():
         return _embed_model, None
     with _embed_lock:
         if _embed_model is None:
-            logger.info("Loading embedding model %s …", _MODEL_REPO)
-            _embed_model = SentenceTransformer(_MODEL_REPO)
-            logger.info("Embedding model loaded.")
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            if settings.EMBEDDINGS_REQUIRE_GPU and device != "cuda":
+                raise RuntimeError(
+                    "EMBEDDINGS_REQUIRE_GPU=true but CUDA is not available."
+                )
+            logger.info(
+                "Loading embedding model repo=%s device=%s cuda_available=%s",
+                _MODEL_REPO,
+                device,
+                torch.cuda.is_available(),
+            )
+            _embed_model = SentenceTransformer(_MODEL_REPO, device=device)
+            logger.info("Embedding model loaded on %s.", device)
     return _embed_model, None
 
 
@@ -60,7 +71,7 @@ def embed_texts_sync(texts: List[str]) -> List[List[float]]:
         return []
 
     model, _ = _get_model_and_tokenizer()
-
+    logger.info("Embedding batch size=%s", len(texts))
     vectors: np.ndarray = model.encode(
         texts,
         batch_size=32,
@@ -89,3 +100,4 @@ async def embed_texts_async(texts: List[str]) -> List[List[float]]:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(_embed_executor, embed_texts_sync, texts)
     return embed_texts_sync(texts)
+

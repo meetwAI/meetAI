@@ -1,4 +1,4 @@
-const API_BASE_URL = 'http://localhost:4010';
+const API_BASE_URL = (import.meta.env.VITE_AUTH_URL || 'http://localhost:4010').replace(/\/$/, '');
 
 const refreshAccessToken = async () => {
   const response = await fetch(`${API_BASE_URL}/refresh`, {
@@ -11,7 +11,6 @@ const refreshAccessToken = async () => {
 
 export const fetchWithAuth = async (path, options = {}, attempt = 0) => {
   const headers = new Headers(options.headers || {});
-
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...options,
     headers,

@@ -5,11 +5,14 @@ const session = require('express-session');
 const passport = require('passport');
 const { requireEnv, requireNumberEnv } = require('../config/env');
 const authRoutes = require('./routes/auth');
+const fs = require('fs');
+const https = require('https');
 
 const PORT = requireNumberEnv('AUTH_PORT');
 const FRONTEND_ORIGIN = requireEnv('FRONTEND_ORIGIN');
-const SESSION_SECRET = requireEnv('SESSION_SECRET');
-
+const SESSION_SECRET = requireEnv('SESSION_SECRET')
+const useHttps = process.env.AUTH_USE_HTTPS === 'true';
+const akram = process.env.auth_dev_mode === 'true';
 const app = express();
 app.use(
   cors({
@@ -19,6 +22,7 @@ app.use(
   }),
 );
 app.use(cookieParser());
+app.set('trust proxy', 1);
 app.use(
   session({
     secret: SESSION_SECRET,
@@ -26,8 +30,8 @@ app.use(
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
-      sameSite: 'lax',
-      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      secure: true,
     },
   }),
 );
@@ -40,7 +44,20 @@ app.get('/health', (_req, res) => {
 
 app.use('/', authRoutes);
 
-app.listen(PORT, () => {
-  // eslint-disable-next-line no-console
-  console.log(`Auth service listening on ${PORT}`);
-});
+if (useHttps) {
+  https
+    .createServer(
+      {
+        key: fs.readFileSync('localhost-key.pem'),
+        cert: fs.readFileSync('localhost.pem'),
+      },
+      app
+    )
+    .listen(PORT, () => {
+      console.log(`HTTPS Auth service on https://localhost:${PORT}`);
+    });
+} else {
+  app.listen(PORT, () => {
+    console.log(`HTTP Auth service on http://localhost:${PORT}`);
+  });
+}

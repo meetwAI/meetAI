@@ -9,10 +9,11 @@ const {
   JWT_TTL_SECONDS,
   REFRESH_TTL_SECONDS,
 } = require('../services/tokenService');
-const { hashPassword, verifyPassword, isPasswordHash } = require('../services/passwordService');
-const { fetchCalendarEvents } = require('../services/googleCalendarService');
+const { hashPassword, verifyPassword, isPasswordHash } = require('../services/passwordService.js');
+const { fetchCalendarEvents, validateGoogleCalendarAccess } = require('../services/googleCalendarService');
 const {
   getUserByUsername,
+  getUserById,
   getGoogleCalendarTokensByUserId,
   createUser,
   updateUserPassword,
@@ -29,61 +30,95 @@ const {
   setGoogleOauthSessionMode,
   consumeGoogleOauthSessionMode,
   estimateGoogleAccessTokenExpiry,
-} = require('../services/googleAuthService');
+  getPkceForState,
+} = require('../services/googleAuthService.js');
 const { decryptGoogleRefreshToken } = require('../services/googleSecretsService');
 
 const router = express.Router();
 
 const setRefreshCookie = (res, refreshToken) => {
+  const useHttps = process.env.AUTH_USE_HTTPS === 'true';
+  const akram = process.env.auth_dev_mode === 'true';
   res.cookie('meetai_refresh', refreshToken, {
     httpOnly: true,
     sameSite: 'strict',
-    secure: process.env.NODE_ENV === 'production',
+    secure: true,
     path: '/',
     maxAge: REFRESH_TTL_SECONDS * 1000,
   });
 };
 
 const setAccessCookie = (res, accessToken) => {
+  const useHttps = process.env.AUTH_USE_HTTPS === 'true';
+  const akram = process.env.auth_dev_mode === 'true';
   res.cookie('meetai_access', accessToken, {
     httpOnly: true,
     sameSite: 'strict',
-    secure: process.env.NODE_ENV === 'production',
+    secure: true,
     path: '/',
     maxAge: JWT_TTL_SECONDS * 1000,
   });
 };
 
 const clearRefreshCookie = (res) => {
+  const useHttps = process.env.AUTH_USE_HTTPS === 'true';
+  const akram = process.env.auth_dev_mode === 'true';
   res.cookie('meetai_refresh', '', {
     httpOnly: true,
     sameSite: 'strict',
-    secure: process.env.NODE_ENV === 'production',
+    secure: true,
     path: '/',
     maxAge: 0,
   });
 };
 
 const clearAccessCookie = (res) => {
+  const useHttps = process.env.AUTH_USE_HTTPS === 'true';
+  const akram = process.env.auth_dev_mode === 'true';
   res.cookie('meetai_access', '', {
     httpOnly: true,
-    sameSite: 'strict',
-    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    secure: useHttps || akram,
     path: '/',
     maxAge: 0,
   });
 };
 
-const buildUser = (user) => ({
-  id: user.id ?? user.sub,
-  username: user.username,
-  name: user.name,
-  avatarUrl: user.avatar_url,
-});
+const buildUser = (user) => {
+  const authProvider = String(user?.authProvider || user?.auth_provider || '').trim();
+  const payload = {
+    id: user.id ?? user.sub,
+    username: user.username,
+    name: user.name,
+    avatarUrl: user.avatar_url,
+  };
+  if (authProvider) {
+    payload.authProvider = authProvider;
+  }
+  return payload;
+};
 
 const normalizeText = (value) => String(value || '').trim();
 const isDevelopment = process.env.NODE_ENV !== 'production';
 const FRONTEND_ORIGIN = normalizeText(process.env.FRONTEND_ORIGIN) || '';
+
+const resolveRedirectUrl = (value) => {
+  const raw = normalizeText(value);
+  if (!raw || !FRONTEND_ORIGIN) {
+    return null;
+  }
+
+  try {
+    const base = new URL(FRONTEND_ORIGIN);
+    const resolved = new URL(raw, base);
+    if (resolved.origin !== base.origin) {
+      return null;
+    }
+    return resolved.toString();
+  } catch (_error) {
+    return null;
+  }
+};
 
 const devError = (error) => {
   if (!isDevelopment || !error) {
@@ -123,10 +158,11 @@ router.post('/signup', async (req, res) => {
       throw new Error('user-create-returned-empty');
     }
 
-    const { accessToken, refreshToken } = await issueTokens(user);
+    const authUser = { ...user, authProvider: 'password' };
+    const { accessToken, refreshToken } = await issueTokens(authUser);
     setAccessCookie(res, accessToken);
     setRefreshCookie(res, refreshToken);
-    return res.status(201).json({ user: buildUser(user) });
+    return res.status(201).json({ user: buildUser(authUser) });
   } catch (error) {
     if (error?.code === '23505') {
       return res.status(409).json({ message: 'Username or email already exists.' });
@@ -165,10 +201,11 @@ router.post('/login', async (req, res) => {
       await updateUserPassword(user.id, upgradedPasswordHash);
     }
 
-    const { accessToken, refreshToken } = await issueTokens(user);
+    const authUser = { ...user, authProvider: 'password' };
+    const { accessToken, refreshToken } = await issueTokens(authUser);
     setAccessCookie(res, accessToken);
     setRefreshCookie(res, refreshToken);
-    return res.json({ user: buildUser(user) });
+    return res.json({ user: buildUser(authUser) });
   } catch (error) {
     console.error('[auth-service] login failed', error);
     return res.status(500).json({
@@ -194,16 +231,18 @@ router.post('/refresh', async (req, res) => {
       await revokeToken(previousAccessToken, 'access');
     }
 
+    const authProvider = normalizeText(payload?.authProvider) || undefined;
     const { accessToken, refreshToken: newRefreshToken } = await issueTokens({
       id: payload.sub,
       username: payload.username,
       name: payload.name,
+      authProvider,
     });
 
     setAccessCookie(res, accessToken);
     setRefreshCookie(res, newRefreshToken);
     return res.json({
-      user: buildUser({ id: payload.sub, username: payload.username, name: payload.name }),
+      user: buildUser({ id: payload.sub, username: payload.username, name: payload.name, authProvider }),
     });
   } catch (_error) {
     return res.status(401).json({ message: 'Unauthorized' });
@@ -298,19 +337,134 @@ router.get('/calendar/status', async (req, res) => {
     return res.status(401).json({ message: 'Unauthorized' });
   }
 
+  const validateParam = normalizeText(req.query?.validate).toLowerCase();
+  const shouldValidate = validateParam === '1' || validateParam === 'true' || validateParam === 'yes';
+
   try {
     const user = await getGoogleCalendarTokensByUserId(userId);
     if (!user) {
       return res.status(404).json({ message: 'User not found.' });
     }
 
-    return res.json({
-      connected: Boolean(
-        normalizeText(user.google_refresh_iv) &&
-          normalizeText(user.google_refresh_ciphertext) &&
-          normalizeText(user.google_refresh_tag),
-      ),
-    });
+    const isGoogleAccount = Boolean(normalizeText(user.google_id_hash));
+
+    const hasTokens = Boolean(
+      normalizeText(user.google_refresh_iv) &&
+        normalizeText(user.google_refresh_ciphertext) &&
+        normalizeText(user.google_refresh_tag),
+    );
+
+    if (!shouldValidate) {
+      return res.json({
+        connected: hasTokens,
+        verified: false,
+        isGoogleAccount,
+        reason: hasTokens ? 'stored_tokens' : 'missing_refresh_token',
+      });
+    }
+
+    if (!hasTokens) {
+      return res.json({
+        connected: false,
+        verified: false,
+        isGoogleAccount,
+        reason: 'missing_refresh_token',
+      });
+    }
+
+    let decryptedRefreshToken = null;
+    try {
+      decryptedRefreshToken = decryptGoogleRefreshToken({
+        iv: user.google_refresh_iv,
+        ciphertext: user.google_refresh_ciphertext,
+        tag: user.google_refresh_tag,
+      });
+    } catch (error) {
+      if (error?.code === 'google-refresh-token-decrypt-failed') {
+        try {
+          await clearGoogleTokensForUser(userId);
+        } catch (_clearTokenError) {
+          // Token cleanup failure should not mask the status response.
+        }
+        return res.json({
+          connected: false,
+          verified: true,
+          isGoogleAccount,
+          reason: 'decrypt_failed',
+        });
+      }
+      throw error;
+    }
+
+    if (!decryptedRefreshToken) {
+      try {
+        await clearGoogleTokensForUser(userId);
+      } catch (_clearTokenError) {
+        // Token cleanup failure should not mask the status response.
+      }
+      return res.json({
+        connected: false,
+        verified: true,
+        isGoogleAccount,
+        reason: 'missing_refresh_token',
+      });
+    }
+
+    try {
+      const validationResult = await validateGoogleCalendarAccess({
+        refreshToken: decryptedRefreshToken,
+      });
+
+      await persistGoogleTokensForUser({
+        userId,
+        refreshToken: null,
+        accessTokenExpiry: validationResult.accessTokenExpiry,
+      });
+
+      return res.json({ connected: true, verified: true, isGoogleAccount });
+    } catch (error) {
+      if (
+        error?.code === 'google-refresh-invalid' ||
+        error?.code === 'google-not-connected' ||
+        error?.code === 'google-refresh-token-decrypt-failed' ||
+        error?.code === 'google-calendar-access-denied'
+      ) {
+        try {
+          await clearGoogleTokensForUser(userId);
+        } catch (_clearTokenError) {
+          // Token cleanup failure should not mask the status response.
+        }
+        return res.json({
+          connected: false,
+          verified: true,
+          isGoogleAccount,
+          reason: error?.code || 'refresh_invalid',
+        });
+      }
+
+      if (error?.statusCode === 502) {
+        return res.json({
+          connected: true,
+          verified: false,
+          unavailable: true,
+          isGoogleAccount,
+          reason: 'provider_unavailable',
+        });
+      }
+
+      console.error('[auth-service] calendar status validation failed', {
+        userId,
+        code: error?.code,
+        statusCode: error?.statusCode,
+        message: error?.message,
+      });
+      return res.json({
+        connected: true,
+        verified: false,
+        isGoogleAccount,
+        reason: 'validation_failed',
+      });
+    }
   } catch (error) {
     console.error('[auth-service] calendar status failed', error);
     return res.status(500).json({
@@ -409,7 +563,8 @@ router.get('/calendar/events', async (req, res) => {
     if (
       error?.code === 'google-refresh-invalid' ||
       error?.code === 'google-not-connected' ||
-      error?.code === 'google-refresh-token-decrypt-failed'
+      error?.code === 'google-refresh-token-decrypt-failed' ||
+      error?.code === 'google-calendar-access-denied'
     ) {
       try {
         await clearGoogleTokensForUser(userId);
@@ -443,16 +598,26 @@ router.get('/calendar/events', async (req, res) => {
 // Google OAuth
 router.get('/auth/google', (req, res, next) => {
   if (!ensureGoogleConfigured({ passport, res })) return undefined;
-  setGoogleOauthSessionMode(req, GOOGLE_OAUTH_MODE_LOGIN);
+  const state = setGoogleOauthSessionMode(req, GOOGLE_OAUTH_MODE_LOGIN);
+  console.log('[auth-service] /auth/google state:', state);
 
-  return passport.authenticate('google', {
+  const { challenge: pkceChallenge } = getPkceForState(state);
+
+  const oauthOptions = {
     scope: GOOGLE_LOGIN_SCOPES,
     session: false,
-    state: true,
-  })(req, res, next);
+    state,
+  };
+
+  if (pkceChallenge) {
+    oauthOptions.code_challenge = pkceChallenge;
+    oauthOptions.code_challenge_method = 'S256';
+  }
+
+  return passport.authenticate('google', oauthOptions)(req, res, next);
 });
 
-router.get('/auth/google/calendar', (req, res, next) => {
+router.get('/auth/google/calendar', async (req, res, next) => {
   if (!ensureGoogleConfigured({ passport, res })) return undefined;
 
   const userId = Number(req.headers['x-user-id']);
@@ -460,31 +625,83 @@ router.get('/auth/google/calendar', (req, res, next) => {
     return res.status(401).json({ message: 'Unauthorized' });
   }
 
-  setGoogleOauthSessionMode(req, GOOGLE_OAUTH_MODE_CALENDAR, userId);
+  const authProvider = normalizeText(req.headers['x-auth-provider']).toLowerCase();
+  let loginHint = '';
+  if (authProvider === 'google') {
+    try {
+      const user = await getUserById(userId);
+      if (!user) {
+        return res.status(404).json({ message: 'User not found.' });
+      }
+      loginHint = normalizeText(user.email);
+    } catch (error) {
+      console.error('[auth-service] calendar connect user lookup failed', {
+        userId,
+        message: error?.message,
+      });
+    }
+  }
 
-  return passport.authenticate('google', {
+  const redirectUrl = resolveRedirectUrl(req.query?.redirect);
+  const state = setGoogleOauthSessionMode(req, GOOGLE_OAUTH_MODE_CALENDAR, userId, redirectUrl);
+  console.log('[auth-service] Calendar OAuth state:', state);
+
+  // Retrieve the PKCE challenge that was generated alongside this state.
+  const { challenge: pkceChallenge } = getPkceForState(state);
+
+  const oauthOptions = {
     scope: GOOGLE_CALENDAR_SCOPES,
     accessType: 'offline',
     prompt: 'consent',
     includeGrantedScopes: true,
     session: false,
-    state: true,
-  })(req, res, next);
+    state,
+  };
+
+  // Attach PKCE parameters when a challenge is available.
+  if (pkceChallenge) {
+    oauthOptions.code_challenge = pkceChallenge;
+    oauthOptions.code_challenge_method = 'S256';
+  }
+
+  if (loginHint) {
+    oauthOptions.loginHint = loginHint;
+  }
+
+  return passport.authenticate('google', oauthOptions)(req, res, next);
 });
 
 router.get('/auth/google/callback', (req, res, next) => {
   if (!ensureGoogleConfigured({ passport, res })) return undefined;
 
-  return passport.authenticate('google', { session: false }, async (error, oauthPayload) => {
-    const { mode, calendarUserId } = consumeGoogleOauthSessionMode(req);
-    const oauthMode = normalizeText(oauthPayload?.oauthMode || mode).toLowerCase() || GOOGLE_OAUTH_MODE_LOGIN;
+  const { verifier: pkceVerifier } = getPkceForState(req.query?.state);
+
+  return passport.authenticate(
+    'google',
+    {
+      session: false,
+      codeVerifier: pkceVerifier || undefined,
+    },
+    async (error, oauthPayload) => {
+    console.log('[auth-service] Passport callback received');
+    console.log('[auth-service] Error:', error?.message || error);
+    console.log('[auth-service] OAuthPayload:', oauthPayload ? JSON.stringify(oauthPayload) : 'null');
+
+    // Get the mode and userId from the OAuth payload returned by our strategy
+    const oauthMode = normalizeText(oauthPayload?.oauthMode || '').toLowerCase() || GOOGLE_OAUTH_MODE_LOGIN;
+    const calendarUserId = oauthPayload?.calendarUserId || null;
+    const redirectUrl = oauthPayload?.redirectUrl || null;
+
+    console.log('[auth-service] Callback mode:', oauthMode, 'userId:', calendarUserId, 'redirectUrl:', redirectUrl);
 
     if (error || !oauthPayload) {
       const reason = normalizeText(error?.code || error?.message) || 'oauth_failed';
 
       if (oauthMode === GOOGLE_OAUTH_MODE_CALENDAR) {
-        const target = `${FRONTEND_ORIGIN}/profile?calendar=error&reason=${encodeURIComponent(reason)}`;
-        return res.redirect(target);
+        const errorTarget = redirectUrl
+          ? `${redirectUrl}?calendar=error&reason=${encodeURIComponent(reason)}`
+          : `${FRONTEND_ORIGIN}/profile?calendar=error&reason=${encodeURIComponent(reason)}`;
+        return res.redirect(errorTarget);
       }
 
       const target = `${FRONTEND_ORIGIN}/?oauth=error&reason=${encodeURIComponent(reason)}`;
@@ -492,24 +709,57 @@ router.get('/auth/google/callback', (req, res, next) => {
     }
 
     if (oauthMode === GOOGLE_OAUTH_MODE_CALENDAR) {
+      console.log('[auth-service] Processing calendar connection for userId:', calendarUserId);
+
       if (!calendarUserId) {
-        const target = `${FRONTEND_ORIGIN}/profile?calendar=error&reason=missing_session_user`;
-        return res.redirect(target);
+        const errorTarget = redirectUrl
+          ? `${redirectUrl}?calendar=error&reason=missing_session_user`
+          : `${FRONTEND_ORIGIN}/profile?calendar=error&reason=missing_session_user`;
+        return res.redirect(errorTarget);
       }
 
       try {
+        console.log('[auth-service] Persisting tokens for userId:', calendarUserId);
+        const normalizedRefreshToken = normalizeText(oauthPayload.refreshToken) || null;
+        const accessTokenExpiry = normalizeText(oauthPayload.accessToken)
+          ? estimateGoogleAccessTokenExpiry()
+          : null;
+
+        if (!normalizedRefreshToken) {
+          const existing = await getGoogleCalendarTokensByUserId(calendarUserId);
+          const hasStoredToken = Boolean(
+            normalizeText(existing?.google_refresh_iv) &&
+              normalizeText(existing?.google_refresh_ciphertext) &&
+              normalizeText(existing?.google_refresh_tag),
+          );
+
+          if (!hasStoredToken) {
+            const errorTarget = redirectUrl
+              ? `${redirectUrl}?calendar=error&reason=missing_refresh_token`
+              : `${FRONTEND_ORIGIN}/profile?calendar=error&reason=missing_refresh_token`;
+            return res.redirect(errorTarget);
+          }
+        }
+
         await persistGoogleTokensForUser({
           userId: calendarUserId,
-          refreshToken: oauthPayload.refreshToken,
-          accessTokenExpiry: normalizeText(oauthPayload.accessToken)
-            ? estimateGoogleAccessTokenExpiry()
-            : null,
+          refreshToken: normalizedRefreshToken,
+          accessTokenExpiry,
         });
+        console.log('[auth-service] Successfully persisted tokens for userId:', calendarUserId);
 
-        return res.redirect(`${FRONTEND_ORIGIN}/profile?calendar=connected`);
+        const successTarget = redirectUrl
+          ? `${redirectUrl}?calendar=connected`
+          : `${FRONTEND_ORIGIN}/profile?calendar=connected`;
+
+        console.log('[auth-service] Redirecting to:', successTarget);
+        return res.redirect(successTarget);
       } catch (_tokenError) {
-        const target = `${FRONTEND_ORIGIN}/profile?calendar=error&reason=token_persist_failed`;
-        return res.redirect(target);
+        console.error('[auth-service] Token persist error:', _tokenError);
+        const errorTarget = redirectUrl
+          ? `${redirectUrl}?calendar=error&reason=token_persist_failed`
+          : `${FRONTEND_ORIGIN}/profile?calendar=error&reason=token_persist_failed`;
+        return res.redirect(errorTarget);
       }
     }
 
@@ -520,7 +770,8 @@ router.get('/auth/google/callback', (req, res, next) => {
     }
 
     try {
-      const { accessToken, refreshToken } = await issueTokens(user);
+      const authUser = { ...user, authProvider: 'google' };
+      const { accessToken, refreshToken } = await issueTokens(authUser);
       setAccessCookie(res, accessToken);
       setRefreshCookie(res, refreshToken);
       const target = `${FRONTEND_ORIGIN}/`;
@@ -529,7 +780,8 @@ router.get('/auth/google/callback', (req, res, next) => {
       const target = `${FRONTEND_ORIGIN}/?oauth=error&reason=token_failed`;
       return res.redirect(target);
     }
-  })(req, res, next);
+    },
+  )(req, res, next);
 });
 
 module.exports = router;

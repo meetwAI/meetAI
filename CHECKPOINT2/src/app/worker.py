@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import os
+import torch
 
 from src.core.config import settings
 from src.engines.asr_backend import FasterWhisperASR
@@ -15,7 +17,34 @@ logger = logging.getLogger(__name__)
 
 
 class WorkerRuntime:
+    @staticmethod
+    def _log_runtime_environment():
+        cuda_available = torch.cuda.is_available()
+        logger.info(
+            "Runtime device check: torch=%s torch_cuda=%s cuda_available=%s cuda_device_count=%s",
+            torch.__version__,
+            torch.version.cuda,
+            cuda_available,
+            torch.cuda.device_count() if cuda_available else 0,
+        )
+        if cuda_available:
+            logger.info("CUDA device[0]: %s", torch.cuda.get_device_name(0))
+        logger.info(
+            "NVIDIA env: NVIDIA_VISIBLE_DEVICES=%s NVIDIA_DRIVER_CAPABILITIES=%s",
+            os.getenv("NVIDIA_VISIBLE_DEVICES", "<unset>"),
+            os.getenv("NVIDIA_DRIVER_CAPABILITIES", "<unset>"),
+        )
+
     def __init__(self):
+        self._log_runtime_environment()
+        whisper_device = settings.WHISPER_DEVICE.strip().lower()
+        if settings.ASR_REQUIRE_GPU and whisper_device == "cpu":
+            raise RuntimeError(
+                "ASR_REQUIRE_GPU=true but WHISPER_DEVICE is set to cpu."
+            )
+        if settings.ASR_REQUIRE_GPU and not torch.cuda.is_available():
+            raise RuntimeError("ASR_REQUIRE_GPU=true but CUDA is not available.")
+
         self.broker = AudioBroker(
             settings.REDIS_URL, stream_maxlen=settings.REDIS_STREAM_MAXLEN
         )
@@ -34,16 +63,34 @@ class WorkerRuntime:
             buffer_trimming_sec=settings.BUFFER_TRIMMING_SEC,
             confidence_validation=settings.CONFIDENCE_VALIDATION,
         )
+        logger.info(
+            "ASR configured: model=%s device=%s compute_type=%s require_gpu=%s",
+            settings.WHISPER_MODEL_SIZE,
+            settings.WHISPER_DEVICE,
+            settings.WHISPER_COMPUTE_TYPE,
+            settings.ASR_REQUIRE_GPU,
+        )
 
         self.vad_session = None
         if settings.VAD_ENABLED:
             self.vad_session = load_onnx_session(force_onnx_cpu=settings.VAD_FORCE_CPU)
+            logger.info(
+                "VAD configured: enabled=%s force_cpu=%s",
+                settings.VAD_ENABLED,
+                settings.VAD_FORCE_CPU,
+            )
 
         self.shared_diarization = None
         if settings.DIARIZATION_ENABLED:
             try:
                 self.shared_diarization = SortformerDiarization(
-                    settings.DIARIZATION_MODEL_NAME
+                    settings.DIARIZATION_MODEL_NAME,
+                    require_gpu=settings.DIARIZATION_REQUIRE_GPU,
+                )
+                logger.info(
+                    "Diarization configured: model=%s require_gpu=%s",
+                    settings.DIARIZATION_MODEL_NAME,
+                    settings.DIARIZATION_REQUIRE_GPU,
                 )
             except Exception as exc:
                 logger.exception(

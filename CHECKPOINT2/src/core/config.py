@@ -3,10 +3,15 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    WHISPER_MODEL_SIZE: str = Field(default="tiny")
+    ASR_REQUIRE_GPU: bool = Field(default=True)
+    DIARIZATION_REQUIRE_GPU: bool = Field(default=True)
+    EMBEDDINGS_REQUIRE_GPU: bool = Field(default=True)
+
+
     REDIS_URL: str = Field(default="redis://localhost:6379/0")
     REDIS_STREAM_MAXLEN: int = Field(default=5000)
 
-    WHISPER_MODEL_SIZE: str = Field(default="small")
     WHISPER_LANGUAGE: str = Field(default="en")
     WHISPER_COMPUTE_TYPE: str = Field(default="auto")
     WHISPER_DEVICE: str = Field(default="auto")

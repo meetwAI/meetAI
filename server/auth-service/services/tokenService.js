@@ -109,17 +109,29 @@ const issueTokens = async (user) => {
   await revokeUserRefreshToken(userId);
   await revokeUserAccessToken(userId);
 
-  const accessToken = jwt.sign(
-    { sub: user.id, username: user.username, name: user.name, tokenType: 'access' },
-    JWT_ACTIVE_SECRET,
-    { expiresIn: JWT_TTL },
-  );
+  const authProvider = user?.authProvider ? String(user.authProvider) : '';
+  const accessPayload = {
+    sub: user.id,
+    username: user.username,
+    name: user.name,
+    tokenType: 'access',
+  };
+  if (authProvider) {
+    accessPayload.authProvider = authProvider;
+  }
 
-  const refreshToken = jwt.sign(
-    { sub: user.id, username: user.username, name: user.name, tokenType: 'refresh' },
-    JWT_ACTIVE_SECRET,
-    { expiresIn: REFRESH_TTL },
-  );
+  const refreshPayload = {
+    sub: user.id,
+    username: user.username,
+    name: user.name,
+    tokenType: 'refresh',
+  };
+  if (authProvider) {
+    refreshPayload.authProvider = authProvider;
+  }
+
+  const accessToken = jwt.sign(accessPayload, JWT_ACTIVE_SECRET, { expiresIn: JWT_TTL });
+  const refreshToken = jwt.sign(refreshPayload, JWT_ACTIVE_SECRET, { expiresIn: REFRESH_TTL });
 
   const refreshHash = hashToken(refreshToken);
   const accessHash = hashToken(accessToken);

@@ -15,14 +15,21 @@ services:
     build:
       context: ./server
       dockerfile: Dockerfile
-    command: node auth-service/index.js
+    command: node --inspect=0.0.0.0:9229 auth-service/index.js
     env_file:
       - ./server/.env
     environment:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       DATABASE_URL: postgresql://meetai:meetai_pass@postgres:5432/meetai_dev
+      # Keep in sync with gateway's AUTH_SERVICE_URL protocol.
+      # Default to true because gateway uses https://auth-service:4020.
+      AUTH_USE_HTTPS: ${AUTH_USE_HTTPS:-true}
+    volumes:
+      - ./localhost.pem:/app/localhost.pem:ro
+      - ./localhost-key.pem:/app/localhost-key.pem:ro
     ports:
       - "4020:4020"
+      - "9229:9229"
     depends_on:
       redis:
         condition: service_healthy
@@ -34,8 +41,9 @@ services:
           "CMD",
           "node",
           "-e",
-          "require('http').get('http://localhost:4020/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))",
+          "const h=require(process.env.AUTH_USE_HTTPS==='true'?'https':'http');h.get((process.env.AUTH_USE_HTTPS==='true'?'https':'http')+'://localhost:4020/health',{rejectUnauthorized:false},r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))",
         ]
+
       interval: 5s
       timeout: 3s
       retries: 20
@@ -96,12 +104,15 @@ services:
     env_file:
       - ./server/.env
     environment:
-      AUTH_SERVICE_URL: http://auth-service:4020
+      AUTH_SERVICE_URL: https://auth-service:4020
       MEETING_SERVICE_URL: http://meeting-service:4001
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       AI_SERVICE_WS_URL: ws://ai-gateway:8000/asr
     ports:
       - "4010:4010"
+    volumes:
+      - ./localhost.pem:/app/localhost.pem:ro
+      - ./localhost-key.pem:/app/localhost-key.pem:ro
     depends_on:
       redis:
         condition: service_healthy
@@ -117,7 +128,7 @@ services:
           "CMD",
           "node",
           "-e",
-          "require('http').get('http://localhost:4010/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))",
+          "const h=require(process.env.AUTH_USE_HTTPS==='true'?'https':'http');h.get((process.env.AUTH_USE_HTTPS==='true'?'https':'http')+'://localhost:4010/health',{rejectUnauthorized:false},r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))",
         ]
       interval: 5s
       timeout: 3s
@@ -168,10 +179,13 @@ services:
     command: python3 -m src.app.worker
     environment:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      DATABASE_URL: postgresql://meetai:meetai_pass@postgres:5432/meetai_dev
       NUM_WORKERS: 1
       WORKER_ID: 0
       DIARIZATION_ENABLED: "true"
       LOG_LEVEL: INFO
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
     depends_on:
       redis:
         condition: service_healthy
@@ -186,7 +200,10 @@ services:
     environment:
       CHOKIDAR_USEPOLLING: "true"
       HOST: 0.0.0.0
-      VITE_AUTH_URL: http://localhost:4010
+      # Frontend API base URL (used by fetchWithAuth).
+      VITE_AUTH_URL: ${VITE_AUTH_URL:-https://localhost:4010}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-https://localhost:5173}
+      VITE_AUTH_USE_HTTPS: "true"
     ports:
       - "5173:5173"
     develop:
@@ -202,6 +219,11 @@ services:
     depends_on:
       gateway:
         condition: service_healthy
+    volumes:
+      - ./client/meetai-web:/app
+      - /app/node_modules
+      - ./localhost.pem:/app/localhost.pem:ro
+      - ./localhost-key.pem:/app/localhost-key.pem:ro
     restart: unless-stopped
 
   postgres:

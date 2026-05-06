@@ -44,6 +44,24 @@ services:
     environment:
       <<: *common-env
       WORKER_ID: ${WORKER_ID:-0}
+      WHISPER_MODEL_SIZE: ${WHISPER_MODEL_SIZE:-tiny}
+      WHISPER_LANGUAGE: ${WHISPER_LANGUAGE:-en}
+      WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-float16}
+      WHISPER_DEVICE: ${WHISPER_DEVICE:-cuda}
+      ASR_REQUIRE_GPU: ${ASR_REQUIRE_GPU:-true}
+      DIARIZATION_ENABLED: ${DIARIZATION_ENABLED:-false}
+      DIARIZATION_MODEL_NAME: ${DIARIZATION_MODEL_NAME:-nvidia/diar_streaming_sortformer_4spk-v2}
+      DIARIZATION_REQUIRE_GPU: ${DIARIZATION_REQUIRE_GPU:-true}
+      EMBEDDINGS_REQUIRE_GPU: ${EMBEDDINGS_REQUIRE_GPU:-true}
+      TOPIC_EXTRACTION_ENABLED: ${TOPIC_EXTRACTION_ENABLED:-true}
+      TOPIC_WINDOW_SECONDS: ${TOPIC_WINDOW_SECONDS:-80.0}
+      TOPIC_SIMILARITY_THRESHOLD: ${TOPIC_SIMILARITY_THRESHOLD:-0.85}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.1-flash-lite-preview}
+      VAD_ENABLED: ${VAD_ENABLED:-true}
+      VAD_THRESHOLD: ${VAD_THRESHOLD:-0.5}
+      VAD_FORCE_CPU: ${VAD_FORCE_CPU:-true}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://meetai:meetai_pass@localhost:5433/meetai_dev}
     depends_on:
       redis:
         condition: service_healthy

@@ -26,10 +26,14 @@ class StreamingSortformerState:
 
 
 class SortformerDiarization:
-    def __init__(self, model_name: str = "nvidia/diar_streaming_sortformer_4spk-v2"):
-        self._load_model(model_name)
+    def __init__(
+        self,
+        model_name: str = "nvidia/diar_streaming_sortformer_4spk-v2",
+        require_gpu: bool = True,
+    ):
+        self._load_model(model_name, require_gpu=require_gpu)
 
-    def _load_model(self, model_name: str):
+    def _load_model(self, model_name: str, require_gpu: bool = True):
         try:
             from nemo.collections.asr.models import SortformerEncLabelModel
         except ImportError as exc:
@@ -38,11 +42,21 @@ class SortformerDiarization:
                 'pip install "git+https://github.com/NVIDIA/NeMo.git@main#egg=nemo_toolkit[asr]"'
             ) from exc
 
+        cuda_available = torch.cuda.is_available()
+        if require_gpu and not cuda_available:
+            raise RuntimeError(
+                "DIARIZATION_REQUIRE_GPU=true but CUDA is not available."
+            )
+
         self.diar_model = SortformerEncLabelModel.from_pretrained(model_name)
         self.diar_model.eval()
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        device = torch.device("cuda" if cuda_available else "cpu")
         self.diar_model.to(device)
-        logger.info("Using %s for Sortformer model", device.type.upper())
+        logger.info(
+            "Sortformer loaded on device=%s cuda_available=%s",
+            device.type.upper(),
+            cuda_available,
+        )
 
         self.diar_model.sortformer_modules.chunk_len = 10
         self.diar_model.sortformer_modules.subsampling_factor = 10

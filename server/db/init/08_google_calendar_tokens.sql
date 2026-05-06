@@ -1,11 +1,9 @@
--- Migration: add secure Google OAuth storage columns to users table
+-- Cleanup: remove secure Google OAuth storage columns from users table as they are now in auth_providers / google_calendar_accounts
 ALTER TABLE users
-  ADD COLUMN IF NOT EXISTS google_id_hash TEXT,
-  ADD COLUMN IF NOT EXISTS google_refresh_iv TEXT,
-  ADD COLUMN IF NOT EXISTS google_refresh_ciphertext TEXT,
-  ADD COLUMN IF NOT EXISTS google_refresh_tag TEXT,
-  ADD COLUMN IF NOT EXISTS google_token_expiry TIMESTAMP;
+  DROP COLUMN IF EXISTS google_id_hash,
+  DROP COLUMN IF EXISTS google_refresh_iv,
+  DROP COLUMN IF EXISTS google_refresh_ciphertext,
+  DROP COLUMN IF EXISTS google_refresh_tag,
+  DROP COLUMN IF EXISTS google_token_expiry;
 
-CREATE UNIQUE INDEX IF NOT EXISTS users_google_id_hash_idx
-  ON users (google_id_hash)
-  WHERE google_id_hash IS NOT NULL;
+DROP INDEX IF EXISTS users_google_id_hash_idx;

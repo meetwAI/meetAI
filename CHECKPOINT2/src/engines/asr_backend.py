@@ -38,6 +38,7 @@ class FasterWhisperASR:
         self._cache_dir = cache_dir
 
         self.model = self.load_model()
+        self._log_runtime_device()
         self._detected_language = self.original_language
 
     def load_model(self):
@@ -55,6 +56,18 @@ class FasterWhisperASR:
             device=self._device,
             compute_type=self._compute_type,
             download_root=self._cache_dir,
+        )
+
+    def _log_runtime_device(self):
+        model_device = getattr(self.model, "device", None)
+        model_inner = getattr(self.model, "model", None)
+        inner_device = getattr(model_inner, "device", None) if model_inner else None
+        logger.info(
+            "FasterWhisper runtime initialized: requested_device=%s requested_compute_type=%s runtime_device=%s inner_device=%s",
+            self._device,
+            self._compute_type,
+            model_device,
+            inner_device,
         )
 
     def transcribe(self, audio: np.ndarray, init_prompt: str = "") -> list:
