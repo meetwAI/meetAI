@@ -23,6 +23,7 @@ Endpoints
 from __future__ import annotations
 
 import logging
+import os
 from typing import List
 
 from fastapi import FastAPI, HTTPException
@@ -42,6 +43,25 @@ class EmbedRequest(BaseModel):
 class EmbedResponse(BaseModel):
     vectors: List[List[float]]
     dim: int
+
+
+def _warmup_enabled() -> bool:
+    return os.getenv("EMBEDDER_WARMUP", "true").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "y",
+    }
+
+
+@app.on_event("startup")
+async def _startup_warmup() -> None:
+    if not _warmup_enabled():
+        logger.info("Embedder warmup disabled via EMBEDDER_WARMUP.")
+        return
+    logger.info("Warming embedder model...")
+    await embed_texts_async(["warmup"])
+    logger.info("Embedder warmup complete.")
 
 
 @app.get("/health")

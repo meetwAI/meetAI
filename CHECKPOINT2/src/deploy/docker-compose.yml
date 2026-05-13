@@ -65,22 +65,39 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      embedder:
+        condition: service_healthy
 
   embedder:
     build: *app-build
-    # Start the server in the background, wait for it to be accessible,
-    # hit the warmup endpoint, and then wait for the server process.
-    command: >
-      sh -c "python3 -m src.embedder &
-      while ! curl -s http://localhost:8200/health > /dev/null; do sleep 1; done;
-      curl -X POST http://localhost:8200/warmup;
-      wait"
+    # Warmup runs in the app startup hook before the service is marked healthy.
+    command: ["python3", "-m", "src.embedder"]
     restart: unless-stopped
     environment:
       <<: *common-env
       EMBEDDER_PORT: 8200
+      EMBEDDINGS_PREFER_LOCAL: "true"
+      HF_HOME: /root/.cache/huggingface
+      HUGGINGFACE_HUB_CACHE: /root/.cache/huggingface/hub
+      TRANSFORMERS_CACHE: /root/.cache/huggingface/transformers
+      SENTENCE_TRANSFORMERS_HOME: /root/.cache/huggingface/sentence_transformers
+      TORCH_HOME: /root/.cache/huggingface/torch
+    volumes:
+      - hf-cache:/root/.cache/huggingface
     ports:
       - "8200:8200"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import json,urllib.request,sys; data=json.load(urllib.request.urlopen('http://localhost:8200/health', timeout=3)); sys.exit(0 if data.get('model_loaded') else 1)",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10m
 
   qa:
     build: *app-build
@@ -92,3 +109,9 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgresql://meetai:meetai_pass@postgres:5432/meetai_dev}
     ports:
       - "8100:8100"
+    depends_on:
+      embedder:
+        condition: service_healthy
+
+volumes:
+  hf-cache:

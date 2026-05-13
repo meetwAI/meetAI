@@ -86,7 +86,8 @@ async def _startup() -> None:
         api_key=settings.GEMINI_API_KEY,
         model=settings.GEMINI_MODEL,
     )
-    logger.info("QA service ready (model=%s)", settings.GEMINI_MODEL)
+    import socket
+    logger.info("QA service ready (model=%s) (hosted on %s)", settings.GEMINI_MODEL, socket.gethostname())
 
 
 @app.on_event("shutdown")

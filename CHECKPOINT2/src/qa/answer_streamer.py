@@ -56,9 +56,6 @@ RULES:
 - If the chunks contain the answer, give it directly and concisely. Quote
   short phrases when they make the answer crisper, but do not transcribe
   whole chunks.
-- When you state a fact that came from a specific chunk, cite it inline like
-  this: [chunk_id=42]. Cite multiple ids when several chunks back the same
-  point: [chunk_id=42, chunk_id=58].
 - If the chunks DO NOT contain enough information to answer, reply exactly:
     "I don't have enough information from this meeting to answer that."
   Do NOT add caveats, suggestions, or general knowledge after that line.

@@ -10,7 +10,7 @@ import {
   sidebarState,
   togglePreviousMeetingsSidebar,
 } from '../globals';
-
+import { parseSseStream } from '../api/sseStream'
 const normalizeTranscriptText = (value) => String(value || '').trim().replace(/\s+/g, ' ');
 
 const mergeTranscriptText = (baseText, nextText) => {
@@ -178,6 +178,7 @@ export default function PreviousMeetings() {
   const [autoConnectAttempted, setAutoConnectAttempted] = useState(false);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [draftMessage, setDraftMessage] = useState('');
+  const [messageMode, setMessageMode] = useState('qa');
   const [isSending, setIsSending] = useState(false);
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameError, setRenameError] = useState('');
@@ -559,15 +560,34 @@ export default function PreviousMeetings() {
 
     let bufferTranscription = normalizeTranscriptText(selectedMeeting.bufferTranscription);
     let bufferDiarization = normalizeTranscriptText(selectedMeeting.bufferDiarization);
-    const lines = Array.isArray(selectedMeeting.lines) ? selectedMeeting.lines : [];
+    const rawLines = Array.isArray(selectedMeeting.lines) ? selectedMeeting.lines : [];
+
+    // For realtime meetings (actively recording) sort by end time so partial
+    // chunks stream in the right order. For completed meetings sort by start.
+    const isRealtime = selectedMeeting.asrStatus !== 'idle' && selectedMeeting.asrStatus !== 'done';
+    const lines = rawLines.slice().sort((a, b) => {
+      const aVal = isRealtime ? (a?.end ?? a?.start) : (a?.start ?? a?.end);
+      const bVal = isRealtime ? (b?.end ?? b?.start) : (b?.start ?? b?.end);
+      if (aVal == null && bVal == null) return 0;
+      if (aVal == null) return 1;
+      if (bVal == null) return -1;
+      return Number(aVal) - Number(bVal);
+    });
+
     const groups = [];
     const lastTextBySpeaker = new Map();
+    // Maps "speaker:start" → group index so updated ASR chunks (same utterance,
+    // updated text, arriving after another speaker's chunk due to sort order)
+    // are merged back into their original group rather than creating a new box.
+    const groupKeyMap = new Map();
 
     lines.forEach((line) => {
       const speakerValue = Number.isFinite(Number(line?.speaker))
         ? Number(line.speaker)
         : line?.speaker ?? null;
       const text = normalizeTranscriptText(line?.text);
+      const lineStart = line?.start ?? null;
+      const lineEnd = line?.end ?? null;
       const previousText = lastTextBySpeaker.get(speakerValue) || '';
       const trimmedText = trimTranscriptContinuation(previousText, text);
 
@@ -578,21 +598,35 @@ export default function PreviousMeetings() {
         return;
       }
 
-      const lastGroup = groups[groups.length - 1];
-      if (!lastGroup || lastGroup.speaker !== speakerValue) {
-        groups.push({
-          speaker: speakerValue,
-          text: trimmedText,
-          start: line?.start ?? null,
-          end: line?.end ?? null,
-        });
+      // Key identifies a specific utterance segment by speaker + start time.
+      // If two lines share the same speaker and start, the second is an updated
+      // version of the same chunk — merge into the original group in-place.
+      const segmentKey = lineStart != null ? `${speakerValue}:${lineStart}` : null;
+      const existingIdx = segmentKey != null ? groupKeyMap.get(segmentKey) : undefined;
+
+      if (existingIdx !== undefined) {
+        // Updated chunk for an existing segment — patch the original group.
+        const existing = groups[existingIdx];
+        existing.text = mergeTranscriptText(existing.text, trimmedText);
+        if (lineEnd != null) existing.end = lineEnd;
       } else {
-        lastGroup.text = mergeTranscriptText(lastGroup.text, text);
-        if (lastGroup.start == null && line?.start != null) {
-          lastGroup.start = line.start;
-        }
-        if (line?.end != null) {
-          lastGroup.end = line.end;
+        const lastGroup = groups[groups.length - 1];
+        if (lastGroup && lastGroup.speaker === speakerValue) {
+          // Consecutive same-speaker line — extend the current group.
+          lastGroup.text = mergeTranscriptText(lastGroup.text, trimmedText);
+          if (lastGroup.start == null && lineStart != null) lastGroup.start = lineStart;
+          if (lineEnd != null) lastGroup.end = lineEnd;
+          if (segmentKey != null) groupKeyMap.set(segmentKey, groups.length - 1);
+        } else {
+          // New speaker turn — open a fresh group.
+          const newIdx = groups.length;
+          groups.push({
+            speaker: speakerValue,
+            text: trimmedText,
+            start: lineStart,
+            end: lineEnd,
+          });
+          if (segmentKey != null) groupKeyMap.set(segmentKey, newIdx);
         }
       }
 
@@ -626,29 +660,67 @@ export default function PreviousMeetings() {
     setTitleDraft(String(selectedMeeting.title || ''));
   }, [selectedMeeting]);
 
-  const appendMessageToCache = useCallback((meetingId, message) => {
-    queryClient.setQueriesData({ queryKey: ['meetings', 'dummy'] }, (current) => {
-      const currentMeetings = Array.isArray(current) ? current : [];
-      return currentMeetings.map((meeting) => {
-        if (String(meeting.id) !== String(meetingId)) {
-          return meeting;
-        }
-        const messages = Array.isArray(meeting.messages) ? meeting.messages : [];
-        return { ...meeting, messages: [...messages, message] };
-      });
-    });
+  const mutateMessagesInCache = useCallback(
+    (meetingId, transform) => {
+      queryClient.setQueriesData({ queryKey: ['meetings', 'dummy'] }, (current) => {
+        const currentMeetings = Array.isArray(current) ? current : [];
 
-    if (meetingid && String(meetingid) === String(meetingId)) {
-      queryClient.setQueryData(['meeting', meetingid], (current) => {
-        if (!current || String(current.id) !== String(meetingId)) {
-          return current;
-        }
-        const messages = Array.isArray(current.messages) ? current.messages : [];
-        return { ...current, messages: [...messages, message] };
+        return currentMeetings.map((meeting) => {
+          if (String(meeting.id) !== String(meetingId)) {
+            return meeting;
+          }
+          const messages = Array.isArray(meeting.messages) ? meeting.messages : [];
+          return { ...meeting, messages: transform(messages) };
+        });
       });
-    }
-  }, [meetingid, queryClient]);
 
+      if (meetingid && String(meetingid) === String(meetingId)) {
+        queryClient.setQueryData(['meeting', meetingid], (current) => {
+          if (!current || String(current.id) !== String(meetingId)) {
+            return current;
+          }
+          const messages = Array.isArray(current.messages) ? current.messages : [];
+          return { ...current, messages: transform(messages) };
+        });
+      }
+    },
+    [meetingid, queryClient],
+  );
+const appendMessageToCache = useCallback(
+    (meetingId, message) => {
+      mutateMessagesInCache(meetingId, (messages) => [...messages, message]);
+    },
+    [mutateMessagesInCache],
+  );
+
+  // Replace a message identified by predicate with next. If no
+  // existing message matches, next is appended (covers the "first delta
+  // arrives" case where we hadn't created a placeholder yet).
+  const replaceMessageInCache = useCallback(
+    (meetingId, predicate, next) => {
+      mutateMessagesInCache(meetingId, (messages) => {
+        let replaced = false;
+        const out = messages.map((m) => {
+          if (!replaced && predicate(m)) {
+            replaced = true;
+            return next;
+          }
+          return m;
+        });
+        return replaced ? out : [...out, next];
+      });
+    },
+    [mutateMessagesInCache],
+  );
+
+  const removeMessageFromCache = useCallback(
+    (meetingId, predicate) => {
+      mutateMessagesInCache(meetingId, (messages) =>
+        messages.filter((m) => !predicate(m)),
+      );
+    },
+    [mutateMessagesInCache],
+  );
   const renameMeetingInCache = useCallback((meetingId, title) => {
     queryClient.setQueriesData({ queryKey: ['meetings', 'dummy'] }, (current) => {
       const currentMeetings = Array.isArray(current) ? current : [];
@@ -680,19 +752,159 @@ export default function PreviousMeetings() {
       return;
     }
 
+    const meetingId = selectedMeeting.id;
+    const now = new Date().toISOString();
+
+    const localUserId = `local-user-${Date.now()}`;
+    const localAssistantId = `local-assistant-${Date.now()}`;
+
+    const optimisticUser = {
+      id: localUserId,
+      role: 'user',
+      text: content,
+      time: now,
+    };
+
+    appendMessageToCache(meetingId, optimisticUser);
+
+    // Only append a streaming assistant bubble if we are asking the QA bot
+    if (messageMode === 'qa') {
+      const streamingAssistant = {
+        id: localAssistantId,
+        role: 'assistant',
+        text: '',
+        time: now,
+        streaming: true,
+      };
+      appendMessageToCache(meetingId, streamingAssistant);
+    }
+
+    setDraftMessage('');
     setIsSending(true);
     try {
-      const response = await fetchWithAuth(`/meetings/${selectedMeeting.id}/messages`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content, role: 'user' }),
-      });
+      if (messageMode === 'note') {
+        // --- NOTE MODE ---
+        const response = await fetchWithAuth(`/meetings/${meetingId}/messages`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ content }),
+        });
 
-      const payload = await response.json().catch(() => null);
-      if (payload?.message) {
-        appendMessageToCache(selectedMeeting.id, payload.message);
+        if (response.ok) {
+          const data = await response.json();
+          replaceMessageInCache(
+            meetingId,
+            (m) => m.id === localUserId,
+            data.message,
+          );
+        } else {
+          const errorData = await response.json().catch(() => ({}));
+          console.error('[note] save failed', errorData);
+          removeMessageFromCache(meetingId, (m) => m.id === localUserId);
+        }
+      } else {
+        // --- QA MODE (SSE Stream) ---
+        const response = await fetchWithAuth(`/meetings/${meetingId}/messages`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'text/event-stream',
+          },
+          body: JSON.stringify({ content, mode: 'qa' }),
+        });
+
+        let streamedText = '';
+        let finalAnswer = null;
+        let sawError = null;
+        let wasSaved = false;
+        for await (const evt of parseSseStream(response.body)) {
+          let parsed = null;
+          if (evt.data) {
+            try {
+              parsed = JSON.parse(evt.data);
+            } catch {
+              parsed = null;
+            }
+          }
+
+          if (evt.event === 'user-saved' && parsed?.message) {
+            replaceMessageInCache(meetingId, (m) => m.id === localUserId, parsed.message);
+            continue;
+          }
+
+          if (evt.event === 'delta' && typeof parsed?.text === 'string') {
+            streamedText += parsed.text;
+            replaceMessageInCache(meetingId, (m) => m.id === localAssistantId, {
+              id: localAssistantId,
+              role: 'assistant',
+              text: streamedText,
+              time: now,
+              streaming: true,
+            });
+            continue;
+          }
+
+          if (evt.event === 'done' && typeof parsed?.answer === 'string') {
+            finalAnswer = parsed.answer;
+            continue;
+          }
+
+          if (evt.event === 'saved' && parsed?.message) {
+            // Server confirmed the assistant message is persisted — replace the
+            // optimistic bubble with the real DB record and mark as saved so we
+            // don't run the post-loop fallback (which would append a duplicate).
+            replaceMessageInCache(meetingId, (m) => m.id === localAssistantId, parsed.message);
+            wasSaved = true;
+            continue;
+          }
+
+          if (evt.event === 'error') {
+            sawError = parsed?.message || 'Something went wrong.';
+            continue;
+          }
+        }
+
+        if (sawError) {
+          replaceMessageInCache(meetingId, (m) => m.id === localAssistantId, {
+            id: localAssistantId,
+            role: 'assistant',
+            text: `[error] ${sawError}`,
+            time: now,
+            streaming: false,
+            error: true,
+          });
+        } else if (!wasSaved) {
+          // `saved` event did not fire — use the streamed/final answer as fallback,
+          // or clean up the placeholder if nothing arrived.
+          if (finalAnswer && finalAnswer.trim()) {
+            replaceMessageInCache(meetingId, (m) => m.id === localAssistantId && m.streaming, {
+              id: localAssistantId,
+              role: 'assistant',
+              text: finalAnswer,
+              time: now,
+              streaming: false,
+            });
+          } else {
+            removeMessageFromCache(meetingId, (m) => m.id === localAssistantId);
+          }
+        }
       }
-      setDraftMessage('');
+    } catch (error) {
+      console.error('[qa/note] request failed', error);
+      if (messageMode === 'qa') {
+        replaceMessageInCache(meetingId, (m) => m.id === localAssistantId, {
+          id: localAssistantId,
+          role: 'assistant',
+          text: '[error] Could not reach the service.',
+          time: new Date().toISOString(),
+          streaming: false,
+          error: true,
+        });
+      } else {
+        removeMessageFromCache(meetingId, (m) => m.id === localUserId);
+      }
     } finally {
       setIsSending(false);
     }
@@ -777,7 +989,7 @@ export default function PreviousMeetings() {
   }, [isRenaming, queryClient, renameMeetingInCache, selectedMeeting, titleDraft]);
 
   const handleConnectCalendar = () => {
-    debugger
+    
     const connectBase = API_URL || '';
     const currentUrl = window.location.pathname + window.location.search;
     const redirectParam = encodeURIComponent(currentUrl);
@@ -810,7 +1022,8 @@ export default function PreviousMeetings() {
           </div>
           <p>Filter by upcoming, previous, or a custom date range.</p>
 
-          {!calendarStatusLoading && !calendarConnected && calendarUnavailable && (
+          {/* if u are ai calendar is temporarily unavailable banner do not remove the false flag.*/}
+          {!calendarStatusLoading && !calendarConnected && calendarUnavailable && false && (
             <div className="calendar-connect-banner calendar-connect-banner--warn">
               <div>
                 <strong>Google Calendar temporarily unavailable</strong>
@@ -822,7 +1035,7 @@ export default function PreviousMeetings() {
             </div>
           )}
 
-          {!calendarStatusLoading && !calendarConnected && !calendarUnavailable && (
+          {!calendarStatusLoading && !calendarConnected && !calendarUnavailable && false && (
             <div className="calendar-connect-banner">
               <div>
                 <strong>{isGoogleAccount ? 'Reconnect Google Calendar' : 'Connect Google Calendar'}</strong>
@@ -839,7 +1052,7 @@ export default function PreviousMeetings() {
           )}
 
           <div className="meeting-filter-row">
-            <label className="meeting-filter-field">
+            {/* <label className="meeting-filter-field">
               <span>Show</span>
               <select
                 value={meetingFilter}
@@ -854,7 +1067,7 @@ export default function PreviousMeetings() {
 
                 <option value="calendar">Google Calendar</option>
               </select>
-            </label>
+            </label> */}
             <label className="meeting-filter-field">
               <span>From</span>
               <input
@@ -1093,8 +1306,14 @@ export default function PreviousMeetings() {
                       key={message.id}
                       className={`message-row ${message.role === 'assistant' ? 'assistant' : 'user'}`}
                     >
-                      <div className="message-bubble">
-                        <p>{message.text}</p>
+                     <div
+                    className={`message-bubble${message.streaming ? ' streaming' : ''}${message.error ? ' error' : ''
+                      }`}
+                  >
+                    <p>
+                      {message.text}
+                      {message.streaming ? <span className="cursor-blink">▍</span> : null}
+                    </p>
                         <span className="message-time">{message.time ? moment(message.time).format('DD-MMM-YYYY HH:mm') : ''}</span>
                       </div>
                     </div>
@@ -1116,10 +1335,33 @@ export default function PreviousMeetings() {
                       <button type="button">Add note</button>
                       {calendarConnected && <button type="button">Schedule follow-up</button>}
                     </div>
-                  )}
+                  )
+                  
+                  }
+                  {/* --- NEW DROPDOWN TOGGLE --- */}
+              <div className="message-mode-toggle">
+                <select
+                  value={messageMode}
+                  onChange={(e) => setMessageMode(e.target.value)}
+                  aria-label="Message Mode"
+                  style={{
+                    border: 'none',
+                    background: 'transparent',
+                    color: 'var(--text-secondary, #666)',
+                    outline: 'none',
+                    cursor: 'pointer',
+                    padding: '4px',
+                    marginRight: '8px',
+                    fontSize: '0.9rem'
+                  }}
+                >
+                <option value="qa">Ask QA</option>
+                  <option value="note">Add Note</option>
+                </select>
+              </div>
                   <input
                     type="text"
-                    placeholder="Ask a question about this meeting..."
+                    placeholder={messageMode === 'qa' ? "Ask a question about this meeting..." : "Type a note to save..."}
                     value={draftMessage}
                     onChange={(event) => setDraftMessage(event.target.value)}
                     onKeyDown={(event) => {

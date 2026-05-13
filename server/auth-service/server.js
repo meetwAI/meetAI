@@ -7,6 +7,7 @@ const { requireEnv, requireNumberEnv } = require('../config/env');
 const authRoutes = require('./routes/auth');
 const fs = require('fs');
 const https = require('https');
+const os = require('os');
 
 const PORT = requireNumberEnv('AUTH_PORT');
 const FRONTEND_ORIGIN = requireEnv('FRONTEND_ORIGIN');
@@ -54,10 +55,10 @@ if (useHttps) {
       app
     )
     .listen(PORT, () => {
-      console.log(`HTTPS Auth service on https://localhost:${PORT}`);
+      console.log(`HTTPS Auth service on https://localhost:${PORT} (hosted on ${os.hostname()})`);
     });
 } else {
   app.listen(PORT, () => {
-    console.log(`HTTP Auth service on http://localhost:${PORT}`);
+    console.log(`HTTP Auth service on http://localhost:${PORT} (hosted on ${os.hostname()})`);
   });
 }

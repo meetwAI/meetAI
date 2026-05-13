@@ -19,10 +19,14 @@ Public surface
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
+import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import List
+
+import requests
 import torch
 import numpy as np
 from sentence_transformers import SentenceTransformer
@@ -34,9 +38,72 @@ _MODEL_REPO = "BAAI/bge-m3"
 EMBED_DIM = 1024
 _MAX_SYNC_BATCH = 64  # above this we offload to thread to keep event loop free
 
+# HTTP timeouts for service mode. Embedding bge-m3 on a small batch is fast,
+# but the *first* request on a cold server triggers model download/load, so
+# the read timeout has to be generous.
+_HTTP_CONNECT_TIMEOUT = 5.0
+_HTTP_READ_TIMEOUT = 120.0
+
 _embed_model = None
 _embed_lock = threading.Lock()
 _embed_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="st-bge")
+
+
+def _service_url() -> str:
+    """
+    Return the embedder service URL if service mode is active, else "".
+
+    Read on every call (not cached) so a process can flip modes by setting
+    the env var without a restart — useful for tests and for the embedder
+    server itself, which must NEVER call out to itself.
+    """
+    return (os.getenv("EMBED_SERVICE_URL") or "").rstrip("/")
+
+
+def _embed_via_service(texts: List[str], base_url: str) -> List[List[float]]:
+    """POST /embed against the embedder microservice. Raises on failure."""
+    resp = requests.post(
+        f"{base_url}/embed",
+        json={"texts": list(texts)},
+        timeout=(_HTTP_CONNECT_TIMEOUT, _HTTP_READ_TIMEOUT),
+    )
+    resp.raise_for_status()
+    payload = resp.json()
+    vectors = payload.get("vectors")
+    if not isinstance(vectors, list):
+        raise RuntimeError(
+            f"embedder service returned malformed payload: {payload!r}"
+        )
+    if vectors and len(vectors[0]) != EMBED_DIM:
+        raise RuntimeError(
+            f"embedder service returned dim {len(vectors[0])}, expected {EMBED_DIM}"
+        )
+    return vectors
+
+
+def _prefer_local_cache() -> bool:
+    return os.getenv("EMBEDDINGS_PREFER_LOCAL", "true").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "y",
+    }
+
+
+def _cache_dir() -> str | None:
+    cache_dir = os.getenv("SENTENCE_TRANSFORMERS_HOME") or os.getenv(
+        "EMBEDDINGS_CACHE_DIR", ""
+    )
+    cache_dir = cache_dir.strip()
+    return cache_dir or None
+
+
+def _supports_local_files_only() -> bool:
+    try:
+        params = inspect.signature(SentenceTransformer.__init__).parameters
+    except (TypeError, ValueError):
+        return False
+    return "local_files_only" in params
 
 
 def _get_model_and_tokenizer():
@@ -57,7 +124,28 @@ def _get_model_and_tokenizer():
                 device,
                 torch.cuda.is_available(),
             )
-            _embed_model = SentenceTransformer(_MODEL_REPO, device=device)
+            st_kwargs: dict[str, object] = {"device": device}
+            cache_dir = _cache_dir()
+            if cache_dir:
+                st_kwargs["cache_folder"] = cache_dir
+
+            if _prefer_local_cache() and _supports_local_files_only():
+                try:
+                    _embed_model = SentenceTransformer(
+                        _MODEL_REPO,
+                        local_files_only=True,
+                        **st_kwargs,
+                    )
+                    logger.info("Loaded embedding model from local cache.")
+                except Exception as exc:
+                    logger.warning(
+                        "Local cache miss for %s (%s). Downloading from Hugging Face.",
+                        _MODEL_REPO,
+                        exc,
+                    )
+
+            if _embed_model is None:
+                _embed_model = SentenceTransformer(_MODEL_REPO, **st_kwargs)
             logger.info("Embedding model loaded on %s.", device)
     return _embed_model, None
 
@@ -69,6 +157,10 @@ def embed_texts_sync(texts: List[str]) -> List[List[float]]:
     """
     if not texts:
         return []
+
+    base_url = _service_url()
+    if base_url:
+        return _embed_via_service(texts, base_url)
 
     model, _ = _get_model_and_tokenizer()
     logger.info("Embedding batch size=%s", len(texts))
@@ -90,13 +182,17 @@ def embed_texts_sync(texts: List[str]) -> List[List[float]]:
 
 async def embed_texts_async(texts: List[str]) -> List[List[float]]:
     """
-    Async wrapper. Small batches run inline (sentence-transformers is non-blocking
-    enough for small inputs); large batches are offloaded to a dedicated thread so
-    asyncio stays free.
+        Async wrapper.
+
+        - Service mode: ``requests`` is blocking, so we ALWAYS offload to the
+            thread pool. The HTTP round-trip would otherwise stall the event loop.
+        - Local mode: small batches run inline (sentence-transformers is non-blocking
+            enough for small inputs); large batches are offloaded to a dedicated thread so
+            asyncio stays free.
     """
     if not texts:
         return []
-    if len(texts) > _MAX_SYNC_BATCH:
+    if _service_url() or len(texts) > _MAX_SYNC_BATCH:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(_embed_executor, embed_texts_sync, texts)
     return embed_texts_sync(texts)

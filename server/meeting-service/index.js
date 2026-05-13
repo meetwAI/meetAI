@@ -1,10 +1,190 @@
 const http = require('http');
 const express = require('express');
 const cors = require('cors');
+const os = require('os');
 const { requireNumberEnv } = require('../config/env');
 const { query } = require('../db/client');
 
 const PORT = requireNumberEnv('PORT');
+// QA service URL — host machine in dev (CHECKPOINT1 runs natively on macOS),
+// container DNS later when this is moved into compose. Defaults to the
+// Docker-for-Mac host bridge so containerised meeting-service can reach the
+// CHECKPOINT1 process the user runs in a host shell.
+const QA_SERVICE_URL = (process.env.QA_SERVICE_URL || 'http://ai-gateway:8000').replace(/\/+$/, '');
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// ---------------------------------------------------------------------------
+// Transcript cleaning helpers — ported from PreviousMeetings.jsx so that what
+// gets stored in the DB matches exactly what the frontend renders.
+// ---------------------------------------------------------------------------
+
+const normalizeTranscriptText = (value) => String(value || '').trim().replace(/\s+/g, ' ');
+
+const mergeTranscriptText = (baseText, nextText) => {
+  const base = normalizeTranscriptText(baseText);
+  const next = normalizeTranscriptText(nextText);
+
+  if (!base) return next;
+  if (!next) return base;
+  if (base === next) return base;
+  if (next.startsWith(base)) return next;
+  if (base.startsWith(next)) return base;
+
+  const baseWords = base.split(' ');
+  const nextWords = next.split(' ');
+  const maxOverlap = Math.min(baseWords.length, nextWords.length);
+  let overlap = 0;
+
+  for (let i = 1; i <= maxOverlap; i += 1) {
+    const baseSlice = baseWords.slice(baseWords.length - i).join(' ');
+    const nextSlice = nextWords.slice(0, i).join(' ');
+    if (baseSlice === nextSlice) {
+      overlap = i;
+    }
+  }
+
+  if (overlap) {
+    return baseWords.concat(nextWords.slice(overlap)).join(' ');
+  }
+
+  return `${base} ${next}`.trim();
+};
+
+const trimTranscriptContinuation = (previousText, nextText) => {
+  const base = normalizeTranscriptText(previousText);
+  const next = normalizeTranscriptText(nextText);
+
+  if (!next) return '';
+  if (!base) return next;
+  if (next === base) return '';
+  if (base.startsWith(next)) return '';
+  if (next.startsWith(base)) {
+    return next.slice(base.length).trimStart();
+  }
+
+  const baseWords = base.split(' ');
+  const nextWords = next.split(' ');
+  const maxOverlap = Math.min(baseWords.length, nextWords.length);
+  let overlap = 0;
+
+  for (let i = 1; i <= maxOverlap; i += 1) {
+    const baseSlice = baseWords.slice(baseWords.length - i).join(' ');
+    const nextSlice = nextWords.slice(0, i).join(' ');
+    if (baseSlice === nextSlice) {
+      overlap = i;
+    }
+  }
+
+  if (overlap) {
+    return nextWords.slice(overlap).join(' ').trim();
+  }
+
+  return next;
+};
+
+/**
+ * Deduplicate and merge raw transcript lines exactly as the frontend does.
+ *
+ * Input:  raw `lines` array from the AI worker (may have overlapping text,
+ *         duplicate chunks, or multiple entries for the same utterance).
+ * Output: a clean array of `{ speaker, text, start, end }` objects — one
+ *         object per speaker-turn, with all duplicate text removed.
+ *
+ * The algorithm mirrors `transcriptState` in PreviousMeetings.jsx:
+ *   1. Sort by `end` time (realtime order used during active recording).
+ *   2. For each line, trim the portion already seen for that speaker.
+ *   3. Merge lines that share the same speaker+start key into one group.
+ *   4. Extend the previous group if the same speaker continues.
+ */
+const cleanTranscriptLines = (rawLines, { isRealtime = false } = {}) => {
+  if (!Array.isArray(rawLines) || !rawLines.length) return [];
+
+  const lines = rawLines.slice().sort((a, b) => {
+    const aVal = isRealtime ? (a?.end ?? a?.start) : (a?.start ?? a?.end);
+    const bVal = isRealtime ? (b?.end ?? b?.start) : (b?.start ?? b?.end);
+    if (aVal == null && bVal == null) return 0;
+    if (aVal == null) return 1;
+    if (bVal == null) return -1;
+    return Number(aVal) - Number(bVal);
+  });
+
+  const groups = [];
+  const lastTextBySpeaker = new Map();
+  const groupKeyMap = new Map();
+
+  lines.forEach((line) => {
+    const speakerValue = Number.isFinite(Number(line?.speaker))
+      ? Number(line.speaker)
+      : line?.speaker ?? null;
+    const text = normalizeTranscriptText(line?.text);
+    const lineStart = line?.start ?? null;
+    const lineEnd = line?.end ?? null;
+    const previousText = lastTextBySpeaker.get(speakerValue) || '';
+    const trimmedText = trimTranscriptContinuation(previousText, text);
+
+    if (!trimmedText) {
+      if (text) {
+        lastTextBySpeaker.set(speakerValue, mergeTranscriptText(previousText, text));
+      }
+      return;
+    }
+
+    const segmentKey = lineStart != null ? `${speakerValue}:${lineStart}` : null;
+    const existingIdx = segmentKey != null ? groupKeyMap.get(segmentKey) : undefined;
+
+    if (existingIdx !== undefined) {
+      const existing = groups[existingIdx];
+      existing.text = mergeTranscriptText(existing.text, trimmedText);
+      if (lineEnd != null) existing.end = lineEnd;
+    } else {
+      const lastGroup = groups[groups.length - 1];
+      if (lastGroup && lastGroup.speaker === speakerValue) {
+        lastGroup.text = mergeTranscriptText(lastGroup.text, trimmedText);
+        if (lastGroup.start == null && lineStart != null) lastGroup.start = lineStart;
+        if (lineEnd != null) lastGroup.end = lineEnd;
+        if (segmentKey != null) groupKeyMap.set(segmentKey, groups.length - 1);
+      } else {
+        const newIdx = groups.length;
+        groups.push({ speaker: speakerValue, text: trimmedText, start: lineStart, end: lineEnd });
+        if (segmentKey != null) groupKeyMap.set(segmentKey, newIdx);
+      }
+    }
+
+    if (text) {
+      lastTextBySpeaker.set(speakerValue, mergeTranscriptText(previousText, text));
+    }
+  });
+
+  return groups;
+};
+
+// ---------------------------------------------------------------------------
+
+const fetchWithRetry = async (url, options, { attempts = 3, baseDelayMs = 250 } = {}) => {
+  let lastError;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (options?.signal?.aborted) {
+      throw options.signal.reason || new Error('Aborted');
+    }
+    try {
+      return await fetch(url, options);
+    } catch (error) {
+      lastError = error;
+      const remaining = attempts - attempt - 1;
+      if (remaining <= 0) {
+        throw error;
+      }
+      const delay = baseDelayMs * Math.pow(2, attempt);
+      console.warn(
+        `[meeting-service] qa: upstream fetch failed, retrying in ${delay}ms (${remaining} left)`,
+        error,
+      );
+      await sleep(delay);
+    }
+  }
+  throw lastError || new Error('fetch failed');
+};
 
 const app = express();
 app.use(cors({ origin: '*', methods: ['GET', 'POST', 'PATCH', 'DELETE'] }));
@@ -288,7 +468,16 @@ app.get('/meetings/:meetingId', (req, res) => {
       return res.status(500).json({ message: 'Failed to load meeting.' });
     });
 });
-
+// Append one message to a meeting's transcript.
+//
+// Two modes share this endpoint:
+//   - default (mode !== 'qa'): just persist the message and return JSON. This
+//     is the chat-bubble flow that already existed.
+//   - mode === 'qa': persist the user's question, then proxy an SSE stream
+//     from the QA service back to the browser, writing the assistant's
+//     answer to the DB once the stream's done event arrives. The browser
+//     gets a text/event-stream response so it can render tokens as they
+//     arrive instead of waiting for the full answer.
 app.post('/meetings/:meetingId/messages', (req, res) => {
   const userId = requireUserId(req, res);
   if (!userId) {
@@ -304,7 +493,9 @@ app.post('/meetings/:meetingId/messages', (req, res) => {
   if (!text) {
     return res.status(400).json({ message: 'Message content is required.' });
   }
-
+if (req.body?.mode === 'qa') {
+    return handleQaMessage({ req, res, meetingId, userId, question: text });
+  }
   const role = req.body?.role === 'assistant' ? 'assistant' : 'user';
   const message = {
     id: `msg-${Date.now()}`,
@@ -336,7 +527,268 @@ app.post('/meetings/:meetingId/messages', (req, res) => {
       return res.status(500).json({ message: 'Failed to save message.' });
     });
 });
+// Append one message to a meeting's transcript — single helper used by both
+// the user-question path and the assistant-answer path of the QA flow.
+const appendMeetingMessage = async ({ meetingId, userId, role, text }) => {
+  const message = {
+    id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    role,
+    text,
+    time: new Date().toISOString(),
+  };
+  const result = await query(
+    `UPDATE meetings
+     SET full_transcript = jsonb_set(
+       COALESCE(full_transcript, '{}'::jsonb),
+       '{messages}',
+       COALESCE(full_transcript->'messages', '[]'::jsonb) || $1::jsonb,
+       true
+     )
+     WHERE id = $2 AND user_id = $3
+     RETURNING id`,
+    [JSON.stringify([message]), meetingId, userId],
+  );
+  if (!result.rowCount) {
+    const error = new Error('Meeting not found.');
+    error.statusCode = 404;
+    throw error;
+  }
+  return message;
+};
 
+// Render a single SSE event into the wire format. We re-emit ``meta``,
+// ``delta``, ``done`` and ``error`` events from the QA service into the
+// outgoing stream, plus one extra ``saved`` event after we've persisted the
+// assistant message so the browser can swap its in-memory bubble for the
+// canonical DB row.
+const writeSseEvent = (res, name, payload) => {
+  res.write(`event: ${name}\n`);
+  res.write(`data: ${JSON.stringify(payload)}\n\n`);
+};
+
+// Handle the QA path of POST /meetings/:meetingId/messages.
+//
+// 1) Persist the user's question into ``full_transcript.messages``.
+// 2) Open POST QA_SERVICE_URL/qa and pipe its SSE response through to the
+//    browser, parsing each event so we can intercept ``done`` and persist
+//    the final assistant answer into the same JSONB array.
+// 3) Always emit a final ``saved`` SSE event with the assistant message id
+//    (or an ``error`` event on any failure) so the browser knows when the
+//    DB-side state is consistent and can stop showing the typing indicator.
+const handleQaMessage = async ({ req, res, meetingId, userId, question }) => {
+  // 1) Persist the user message before opening the upstream stream. If the
+  //    DB write fails we don't want to start spending Gemini tokens.
+  let userMessage;
+  try {
+    userMessage = await appendMeetingMessage({
+      meetingId,
+      userId,
+      role: 'user',
+      text: question,
+    });
+  } catch (error) {
+    if (error.statusCode === 404) {
+      return res.status(404).json({ message: 'Meeting not found.' });
+    }
+    console.error('[meeting-service] qa: failed to persist user question', error);
+    return res.status(500).json({ message: 'Failed to save question.' });
+  }
+
+  // 2) Set SSE headers and flush them immediately so the client opens its
+  //    EventSource / ReadableStream parser without waiting for the first
+  //    event. ``X-Accel-Buffering: no`` disables nginx-style buffering;
+  //    ``Cache-Control: no-cache, no-transform`` keeps proxies from
+  //    rewriting our event boundaries.
+  res.status(200);
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  if (typeof res.flushHeaders === 'function') {
+    res.flushHeaders();
+  }
+
+  // Tell the browser which message id its just-sent question got — useful so
+  // the optimistic bubble it already drew can be reconciled with the row in
+  // the DB without a second GET.
+  writeSseEvent(res, 'user-saved', { message: userMessage });
+
+  // Track whether the client gave up; if it did, we abort the upstream call
+  // so we don't keep paying Gemini for output nobody is reading.
+  const abortController = new AbortController();
+  let clientGone = false;
+  req.on('close', () => {
+    if (!clientGone) {
+      clientGone = true;
+      abortController.abort();
+    }
+  });
+
+  // 3) Open the upstream SSE call.
+  let upstream;
+  try {
+    upstream = await fetchWithRetry(`${QA_SERVICE_URL}/qa`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream',
+      },
+      body: JSON.stringify({
+        meeting_id: meetingId,
+        user_id: userId,
+        question,
+      }),
+      signal: abortController.signal,
+    });
+  } catch (error) {
+    console.error('[meeting-service] qa: upstream fetch failed', error);
+    if (!clientGone) {
+      writeSseEvent(res, 'error', { message: 'QA service unreachable.' });
+      res.end();
+    }
+    return;
+  }
+
+  if (!upstream.ok || !upstream.body) {
+    console.error('[meeting-service] qa: upstream returned non-OK', upstream.status);
+    if (!clientGone) {
+      writeSseEvent(res, 'error', {
+        message: `QA service returned status ${upstream.status}.`,
+      });
+      res.end();
+    }
+    return;
+  }
+
+  // Stream the upstream body through to the client AND parse it line-by-line
+  // so we can intercept the ``done`` event and persist the final answer.
+  // SSE frames are separated by a blank line; events within a frame are made
+  // up of ``event: <name>`` and ``data: <json>`` lines.
+  let buffer = '';
+  let currentEvent = 'message';
+  let currentData = '';
+  let finalAnswer = null;
+  let upstreamError = null;
+
+  const handleFrame = () => {
+    if (!currentData && currentEvent === 'message') {
+      // Empty keepalive — nothing to do.
+      currentEvent = 'message';
+      currentData = '';
+      return;
+    }
+    if (currentEvent === 'done') {
+      try {
+        const parsed = JSON.parse(currentData || '{}');
+        finalAnswer = String(parsed.answer || '');
+      } catch (err) {
+        console.error('[meeting-service] qa: failed to parse done payload', err);
+      }
+    } else if (currentEvent === 'error') {
+      try {
+        const parsed = JSON.parse(currentData || '{}');
+        upstreamError = String(parsed.message || 'Unknown QA error.');
+      } catch (err) {
+        upstreamError = currentData || 'Unknown QA error.';
+      }
+    }
+    currentEvent = 'message';
+    currentData = '';
+  };
+
+  try {
+    for await (const chunk of upstream.body) {
+      // ``upstream.body`` yields Uint8Array (Node fetch). Forward the bytes
+      // verbatim to the client so deltas are flushed without extra latency.
+      if (!clientGone) {
+        res.write(chunk);
+      }
+
+      buffer += Buffer.isBuffer(chunk)
+        ? chunk.toString('utf8')
+        : Buffer.from(chunk).toString('utf8');
+
+      // Walk completed lines out of the buffer.
+      let newlineIdx;
+      while ((newlineIdx = buffer.indexOf('\n')) >= 0) {
+        const rawLine = buffer.slice(0, newlineIdx);
+        buffer = buffer.slice(newlineIdx + 1);
+        // SSE uses LF line endings but tolerates CRLF — strip a trailing CR.
+        const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
+
+        if (line === '') {
+          // End of a frame — interpret what we accumulated.
+          handleFrame();
+          continue;
+        }
+        if (line.startsWith(':')) {
+          // SSE comment / keepalive — ignore.
+          continue;
+        }
+        if (line.startsWith('event:')) {
+          currentEvent = line.slice(6).trim() || 'message';
+          continue;
+        }
+        if (line.startsWith('data:')) {
+          // Multi-line ``data:`` continuations are joined with newlines per
+          // the SSE spec. We almost always emit single-line JSON, but be
+          // defensive.
+          const piece = line.slice(5).replace(/^ /, '');
+          currentData = currentData ? `${currentData}\n${piece}` : piece;
+          continue;
+        }
+        // Other field names (``id:``, ``retry:``) are ignored — we don't use them.
+      }
+    }
+  } catch (error) {
+    if (!clientGone) {
+      console.error('[meeting-service] qa: stream interrupted', error);
+      writeSseEvent(res, 'error', { message: 'QA stream interrupted.' });
+    }
+    if (!res.writableEnded) {
+      res.end();
+    }
+    return;
+  }
+
+  // Drain any final frame the upstream closed without a trailing blank line.
+  if (currentData || currentEvent !== 'message') {
+    handleFrame();
+  }
+
+  // 4) If we got an error event, we already forwarded it; just close.
+  if (upstreamError) {
+    if (!res.writableEnded) {
+      res.end();
+    }
+    return;
+  }
+
+  // 5) Persist the assistant answer (if any) and emit a ``saved`` event so
+  //    the browser can swap its streamed bubble for the canonical DB row.
+  if (finalAnswer && finalAnswer.trim()) {
+    try {
+      const assistantMessage = await appendMeetingMessage({
+        meetingId,
+        userId,
+        role: 'assistant',
+        text: finalAnswer,
+      });
+      if (!clientGone) {
+        writeSseEvent(res, 'saved', { message: assistantMessage });
+      }
+    } catch (error) {
+      console.error('[meeting-service] qa: failed to persist answer', error);
+      if (!clientGone) {
+        writeSseEvent(res, 'error', { message: 'Failed to save answer.' });
+      }
+    }
+  }
+
+  if (!res.writableEnded) {
+    res.end();
+  }
+};
 app.patch('/meetings/:meetingId/transcript', (req, res) => {
   const userId = requireUserId(req, res);
   if (!userId) {
@@ -350,10 +802,15 @@ app.patch('/meetings/:meetingId/transcript', (req, res) => {
 
   const aiSessionId = String(req.body?.aiSessionId || '').trim() || null;
   const asrStatus = String(req.body?.asrStatus || '').trim() || 'active_transcription';
-  const lines = Array.isArray(req.body?.lines) ? req.body.lines : [];
+  const rawLines = Array.isArray(req.body?.lines) ? req.body.lines : [];
   const bufferTranscription = String(req.body?.bufferTranscription || '');
   const bufferDiarization = String(req.body?.bufferDiarization || '');
   const updatedAt = String(req.body?.updatedAt || '').trim() || new Date().toISOString();
+
+  // Apply the same deduplication + merging that the frontend uses when
+  // rendering the transcript, so the database stores clean lines.
+  const isRealtime = asrStatus !== 'idle' && asrStatus !== 'done';
+  const lines = cleanTranscriptLines(rawLines, { isRealtime });
 
   return query(
     `UPDATE meetings
@@ -516,5 +973,5 @@ const server = http.createServer(app);
 
 server.listen(PORT, () => {
   // eslint-disable-next-line no-console
-  console.log(`Meeting service listening on ${PORT}`);
+  console.log(`Meeting service listening on ${PORT} (hosted on ${os.hostname()})`);
 });

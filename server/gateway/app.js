@@ -3,6 +3,7 @@ const https = require('https');
 const fs = require('fs');
 const express = require('express');
 const cors = require('cors');
+const os = require('os');
 const { Server } = require('socket.io');
 const WebSocket = require('ws');
 const { requireEnv, requireNumberEnv } = require('../config/env');
@@ -955,5 +956,5 @@ io.on('connection', (socket) => {
 server.listen(PORT, () => {
   const protocol = useHttps ? 'HTTPS' : 'HTTP';
   // eslint-disable-next-line no-console
-  console.log(`${protocol} Gateway listening on ${PORT}`);
+  console.log(`${protocol} Gateway listening on ${PORT} (hosted on ${os.hostname()})`);
 });

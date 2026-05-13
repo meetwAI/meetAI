@@ -68,6 +68,7 @@ services:
       - ./server/.env
     environment:
       DATABASE_URL: postgresql://meetai:meetai_pass@postgres:5432/meetai_dev
+      QA_SERVICE_URL: http://qa-service:8100
     ports:
       - "4001:4001"
     healthcheck:
@@ -93,6 +94,8 @@ services:
           path: ./server/package.json
     depends_on:
       postgres:
+        condition: service_healthy
+      qa-service:
         condition: service_healthy
     restart: unless-stopped
 
@@ -172,6 +175,39 @@ services:
       retries: 20
     restart: unless-stopped
 
+  embedder:
+    build:
+      context: ./CHECKPOINT2/src
+      dockerfile: deploy/Dockerfile
+    command: python3 -m src.embedder
+    environment:
+      LOG_LEVEL: INFO
+      EMBEDDER_PORT: 8200
+      EMBEDDINGS_PREFER_LOCAL: "true"
+      HF_HOME: /root/.cache/huggingface
+      HUGGINGFACE_HUB_CACHE: /root/.cache/huggingface/hub
+      TRANSFORMERS_CACHE: /root/.cache/huggingface/transformers
+      SENTENCE_TRANSFORMERS_HOME: /root/.cache/huggingface/sentence_transformers
+      TORCH_HOME: /root/.cache/huggingface/torch
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+    ports:
+      - "8200:8200"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import json,urllib.request,sys; data=json.load(urllib.request.urlopen('http://localhost:8200/health', timeout=3)); sys.exit(0 if data.get('model_loaded') else 1)",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10m
+    gpus: all
+    restart: unless-stopped
+
   ai-worker:
     build:
       context: ./CHECKPOINT2/src
@@ -180,6 +216,7 @@ services:
     environment:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       DATABASE_URL: postgresql://meetai:meetai_pass@postgres:5432/meetai_dev
+      EMBED_SERVICE_URL: http://embedder:8200
       NUM_WORKERS: 1
       WORKER_ID: 0
       DIARIZATION_ENABLED: "true"
@@ -189,7 +226,39 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      embedder:
+        condition: service_healthy
     gpus: all
+    restart: unless-stopped
+
+  qa-service:
+    build:
+      context: ./CHECKPOINT2/src
+      dockerfile: deploy/Dockerfile
+    command: python3 -m uvicorn src.qa.server:app --host 0.0.0.0 --port 8100
+    env_file:
+      - ./CHECKPOINT2/src/.env
+    environment:
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      DATABASE_URL: postgresql://meetai:meetai_pass@postgres:5432/meetai_dev
+      EMBED_SERVICE_URL: http://embedder:8200
+    depends_on:
+      postgres:
+        condition: service_healthy
+      embedder:
+        condition: service_healthy
+    gpus: all
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import urllib.request,sys;sys.exit(0 if urllib.request.urlopen('http://localhost:8100/health', timeout=3).getcode()==200 else 1)",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
     restart: unless-stopped
 
   web:
@@ -250,3 +319,4 @@ services:
 
 volumes:
   pgdata:
+  hf-cache:

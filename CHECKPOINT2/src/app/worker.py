@@ -118,10 +118,12 @@ class WorkerRuntime:
 
     async def run(self):
         self.db_pool = await create_pool(settings.DATABASE_URL)
+        import socket
         logger.info(
-            "Worker started: worker_id=%s num_workers=%s",
+            "Worker started: worker_id=%s num_workers=%s (hosted on %s)",
             settings.WORKER_ID,
             settings.NUM_WORKERS,
+            socket.gethostname()
         )
         async for event in self.broker.consume_audio(settings.WORKER_ID, start_id="$"):
             session_id = event["session_id"]
