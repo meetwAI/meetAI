@@ -74,18 +74,18 @@ class AudioPipeline:
         if self.stopped:
             return self._build_front_data()
 
-        if not pcm_bytes:
-            return self._build_front_data()
+        # if not pcm_bytes:
+        #     return self._build_front_data()
 
-        # Guard against malformed frames (odd byte length), which would crash
-        # int16 decoding and restart the worker.
-        if len(pcm_bytes) % 2 != 0:
-            logger.warning(
-                "Skipping malformed PCM frame: session_id=%s byte_len=%s",
-                self.session_id,
-                len(pcm_bytes),
-            )
-            return self._build_front_data()
+        # # Guard against malformed frames (odd byte length), which would crash
+        # # int16 decoding and restart the worker.
+        # if len(pcm_bytes) % 2 != 0:
+        #     logger.warning(
+        #         "Skipping malformed PCM frame: session_id=%s byte_len=%s",
+        #         self.session_id,
+        #         len(pcm_bytes),
+        #     )
+        #     return self._build_front_data()
 
         pcm_array = (
             np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32) / 32768.0

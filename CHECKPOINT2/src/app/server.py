@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    import socket
+    logger.info("Standalone ASR Gateway starting (hosted on %s)", socket.gethostname())
     app.state.broker = AudioBroker(
         settings.REDIS_URL, stream_maxlen=settings.REDIS_STREAM_MAXLEN
     )

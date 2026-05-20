@@ -6,7 +6,7 @@ export function getSocket() {
   return socket;
 }
 
-export function connectSocket(url = 'http://localhost:4010') {
+export function connectSocket(url = import.meta.env.VITE_AUTH_URL || 'https://localhost:4010') {
   if (socket) {
     try {
       if (!socket.connected) socket.connect();

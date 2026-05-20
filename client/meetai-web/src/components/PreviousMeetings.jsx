@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useSignals } from '@preact/signals-react/runtime';
@@ -10,7 +10,7 @@ import {
   sidebarState,
   togglePreviousMeetingsSidebar,
 } from '../globals';
-
+import { parseSseStream } from '../api/sseStream'
 const normalizeTranscriptText = (value) => String(value || '').trim().replace(/\s+/g, ' ');
 
 const mergeTranscriptText = (baseText, nextText) => {
@@ -75,18 +75,110 @@ const trimTranscriptContinuation = (previousText, nextText) => {
   return next;
 };
 
+const normalizeCalendarText = (value) => String(value || '').trim();
+
+const stripCalendarHtml = (value) =>
+  normalizeCalendarText(value).replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+
+const parseCalendarDate = (value) => {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+  return parsed;
+};
+
+const resolveEventStartValue = (event) =>
+  normalizeCalendarText(event?.start?.dateTime || event?.start?.date || event?.end?.dateTime || event?.end?.date);
+
+const resolveEventEndValue = (event) =>
+  normalizeCalendarText(event?.end?.dateTime || event?.end?.date || event?.start?.dateTime || event?.start?.date);
+
+const extractMeetLink = (value) => {
+  const match = normalizeCalendarText(value).match(/https?:\/\/meet\.google\.com\/[\w-]+/i);
+  return match ? match[0] : '';
+};
+
+const resolveMeetLink = (event) => {
+  const hangoutLink = normalizeCalendarText(event?.hangoutLink);
+  if (hangoutLink) {
+    return hangoutLink;
+  }
+
+  const entryPoints = Array.isArray(event?.conferenceData?.entryPoints)
+    ? event.conferenceData.entryPoints
+    : [];
+  const videoEntry = entryPoints.find((entry) =>
+    normalizeCalendarText(entry?.entryPointType).toLowerCase() === 'video' && normalizeCalendarText(entry?.uri),
+  );
+  if (videoEntry?.uri) {
+    return normalizeCalendarText(videoEntry.uri);
+  }
+
+  return extractMeetLink(event?.location);
+};
+
+const buildCalendarMeeting = (event, index) => {
+  const eventId = normalizeCalendarText(event?.id) || `event-${index}`;
+  const startValue = resolveEventStartValue(event);
+  const endValue = resolveEventEndValue(event);
+  const startDate = startValue ? parseCalendarDate(startValue) : null;
+  const endDate = endValue ? parseCalendarDate(endValue) : null;
+  const title = normalizeCalendarText(event?.summary) || 'Untitled event';
+  const description = stripCalendarHtml(event?.description);
+  const location = normalizeCalendarText(event?.location);
+  const meetLink = resolveMeetLink(event);
+  const participants = Array.isArray(event?.attendees)
+    ? event.attendees
+        .map((attendee) => normalizeCalendarText(attendee?.displayName || attendee?.email))
+        .filter(Boolean)
+    : [];
+
+  return {
+    id: `calendar-${eventId}`,
+    sourceId: eventId,
+    title,
+    date: startDate ? startDate.toISOString() : startValue || '',
+    summary: description || location || 'Google Calendar event',
+    participants,
+    messages: [],
+    actionItems: [],
+    lines: [],
+    bufferTranscription: '',
+    bufferDiarization: '',
+    asrStatus: 'idle',
+    updatedAt: normalizeCalendarText(event?.updated) || '',
+    startTime: startDate ? startDate.toISOString() : startValue || '',
+    endTime: endDate ? endDate.toISOString() : endValue || '',
+    isCalendarEvent: true,
+    isAllDay: Boolean(event?.isAllDay),
+    meetLink: meetLink || null,
+    htmlLink: normalizeCalendarText(event?.htmlLink) || null,
+    location,
+  };
+};
+
+const getMeetingSortDate = (meeting) =>
+  parseCalendarDate(meeting?.startTime || meeting?.date || meeting?.updatedAt || '');
+
 
 export default function PreviousMeetings() {
   useSignals();
   const API_URL = import.meta.env.VITE_AUTH_URL || import.meta.env.VITE_API_URL;
   const [selectedId, setSelectedId] = useState(null);
-  const [meetingFilter, setMeetingFilter] = useState('previous');
+  const [meetingFilter, setMeetingFilter] = useState('all');
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [calendarConnected, setCalendarConnected] = useState(false);
   const [calendarStatusLoading, setCalendarStatusLoading] = useState(true);
+  const [calendarVerified, setCalendarVerified] = useState(false);
+  const [calendarUnavailable, setCalendarUnavailable] = useState(false);
+  const [calendarStatusTick, setCalendarStatusTick] = useState(0);
+  const [isGoogleAccount, setIsGoogleAccount] = useState(false);
+  const [autoConnectAttempted, setAutoConnectAttempted] = useState(false);
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   const [draftMessage, setDraftMessage] = useState('');
+  const [messageMode, setMessageMode] = useState('qa');
   const [isSending, setIsSending] = useState(false);
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameError, setRenameError] = useState('');
@@ -102,10 +194,26 @@ export default function PreviousMeetings() {
   const { meetingid } = useParams();
   const isSidebarOpen = sidebarState.value;
 
-  const meetingsQueryKey = ['meetings', 'dummy', meetingFilter, fromDate || null, toDate || null];
+  const handleRetryCalendarStatus = () => {
+    setCalendarStatusTick((tick) => tick + 1);
+  };
+
+  const apiMeetingFilter = meetingFilter === 'calendar' ? 'all' : meetingFilter;
+  const showCalendarOnly = meetingFilter === 'calendar';
+  const shouldLoadMeetings = !showCalendarOnly || Boolean(meetingid);
+
+  const openMeetLink = (link) => {
+    if (!link) {
+      return;
+    }
+    window.open(link, '_blank', 'noopener,noreferrer');
+  };
+
+  const meetingsQueryKey = ['meetings', 'dummy', apiMeetingFilter, fromDate || null, toDate || null];
+
   const meetingsQueryString = useMemo(() => {
     const params = new URLSearchParams();
-    params.set('filter', meetingFilter);
+    params.set('filter', apiMeetingFilter);
     if (fromDate) {
       params.set('from', `${fromDate}T00:00:00.000Z`);
     }
@@ -113,8 +221,7 @@ export default function PreviousMeetings() {
       params.set('to', `${toDate}T23:59:59.999Z`);
     }
     return params.toString();
-  }, [meetingFilter, fromDate, toDate]);
-
+  }, [apiMeetingFilter, fromDate, toDate]);
   useEffect(() => {
     if (typeof window === 'undefined') {
       return undefined;
@@ -141,16 +248,37 @@ export default function PreviousMeetings() {
     let active = true;
 
     const loadCalendarStatus = async () => {
+      // Check if user just returned from Google OAuth flow
+      const params = new URLSearchParams(window.location.search);
+      const calendarState = params.get('calendar');
+
+      if (calendarState === 'connected') {
+        console.log('[PreviousMeetings] User just connected calendar - forcing status refresh');
+      }
+
+      console.log('[PreviousMeetings] Loading calendar status - connected:', calendarConnected, 'verified:', calendarVerified);
+
       setCalendarStatusLoading(true);
+      setCalendarUnavailable(false);
       try {
-        const response = await fetchWithAuth('/calendar/status');
+        const response = await fetchWithAuth('/calendar/status?validate=1');
         const payload = await response.json().catch(() => ({}));
+        console.log('[PreviousMeetings] Calendar status response:', payload);
         if (active) {
-          setCalendarConnected(Boolean(payload?.connected));
+          const connected = Boolean(payload?.connected);
+          const verified = Boolean(payload?.verified);
+          const unavailable = Boolean(payload?.unavailable);
+          const googleAccount = Boolean(payload?.isGoogleAccount);
+          setCalendarConnected(connected);
+          setCalendarVerified(verified);
+          setCalendarUnavailable(unavailable);
+          setIsGoogleAccount(googleAccount);
         }
       } catch {
         if (active) {
           setCalendarConnected(false);
+          setCalendarVerified(false);
+          setCalendarUnavailable(true);
         }
       } finally {
         if (active) {
@@ -163,14 +291,15 @@ export default function PreviousMeetings() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [calendarStatusTick]);
 
   const {
     data: meetings = [],
-    isLoading,
-    error,
+    isLoading: meetingsLoading,
+    error: meetingsError,
   } = useQuery({
     queryKey: meetingsQueryKey,
+    enabled: shouldLoadMeetings,
     queryFn: async () => {
       try {
         const response = await fetchWithAuth(`/meetings/dummy?${meetingsQueryString}`);
@@ -197,12 +326,65 @@ export default function PreviousMeetings() {
     staleTime: 10_000,
   });
 
+  const calendarQueryString = useMemo(() => {
+    const params = new URLSearchParams();
+    if (fromDate) {
+      params.set('timeMin', `${fromDate}T00:00:00.000Z`);
+    }
+    if (toDate) {
+      params.set('timeMax', `${toDate}T23:59:59.999Z`);
+    }
+    params.set('maxResults', '250');
+    return params.toString();
+  }, [fromDate, toDate]);
+
+  // Log when calendar events query should be enabled
+  useEffect(() => {
+    console.log('[PreviousMeetings] Calendar events query state - connected:', calendarConnected, 'verified:', calendarVerified, 'enabled:', calendarConnected && calendarVerified);
+  }, [calendarConnected, calendarVerified]);
+
+  const {
+    data: calendarEvents = [],
+    isLoading: calendarEventsLoading,
+    error: calendarEventsError,
+  } = useQuery({
+    queryKey: ['calendar', 'events', fromDate || null, toDate || null, calendarStatusTick],
+    enabled: calendarConnected,
+    queryFn: async () => {
+      console.log('[PreviousMeetings] Fetching calendar events - connected:', calendarConnected, 'verified:', calendarVerified);
+      try {
+        const response = await fetchWithAuth(`/calendar/events?${calendarQueryString}`);
+        const payload = await response.json().catch(() => ({}));
+        return Array.isArray(payload?.events) ? payload.events : [];
+      } catch (fetchError) {
+        // If the calendar token was revoked/expired, the server returns 401.
+        // Reset connection state so the reconnect banner appears.
+        if (fetchError?.status === 401) {
+          setCalendarConnected(false);
+          setCalendarVerified(false);
+          return [];
+        }
+        let errorMessage = 'Failed to load Google Calendar events.';
+        if (fetchError?.response) {
+          const payload = await fetchError.response.json().catch(() => ({}));
+          if (payload?.message) {
+            errorMessage = payload.message;
+          }
+        } else if (fetchError?.message) {
+          errorMessage = fetchError.message;
+        }
+        throw new Error(errorMessage);
+      }
+    },
+    staleTime: 10_000,
+  });
+
   const {
     data: routeMeeting,
   } = useQuery({
     queryKey: ['meeting', meetingid],
     enabled: Boolean(meetingid),
-    initialData: () => {
+    placeholderData: () => {
       if (!meetingid) return undefined;
       const fromList = meetings.find((meeting) => String(meeting.id) === String(meetingid));
       return fromList || undefined;
@@ -218,44 +400,7 @@ export default function PreviousMeetings() {
     staleTime: 10_000,
   });
 
-  useEffect(() => {
-    if (meetingid) {
-      setSelectedId(meetingid);
-      return;
-    }
-    if (meetings?.length) {
-      setSelectedId((prev) => prev ?? meetings[0].id);
-    }
-  }, [meetings, meetingid]);
-
-  useEffect(() => {
-    if (!meetingid) return;
-    queryClient.invalidateQueries({ queryKey: ['meeting', String(meetingid)] });
-  }, [meetingid, queryClient]);
-
-  useEffect(() => {
-    setShowActionsMenu(false);
-    setIsEditingTitle(false);
-  }, [selectedId]);
-
-  useEffect(() => {
-    if (!showActionsMenu) {
-      return undefined;
-    }
-
-    const handlePointerDown = (event) => {
-      if (actionsMenuRef.current && !actionsMenuRef.current.contains(event.target)) {
-        setShowActionsMenu(false);
-      }
-    };
-
-    document.addEventListener('mousedown', handlePointerDown);
-    return () => {
-      document.removeEventListener('mousedown', handlePointerDown);
-    };
-  }, [showActionsMenu]);
-
-  const normalizedMeetings = useMemo(() => {
+  const normalizedAppMeetings = useMemo(() => {
     const baseMeetings = meetings.map((meeting) => ({
       id: meeting.id,
       title: meeting.title,
@@ -294,10 +439,115 @@ export default function PreviousMeetings() {
     return hasRouteMeeting ? baseMeetings : [routeNormalized, ...baseMeetings];
   }, [meetings, routeMeeting]);
 
+
+
+  useEffect(() => {
+    setShowActionsMenu(false);
+    setIsEditingTitle(false);
+  }, [selectedId]);
+
+  const normalizedCalendarMeetings = useMemo(() => {
+    if (!calendarEvents.length) {
+      return [];
+    }
+
+    const now = new Date();
+    return calendarEvents
+      .map((event, index) => buildCalendarMeeting(event, index))
+      .filter((meeting) => {
+        if (meetingFilter === 'upcoming') {
+          const meetingDate = getMeetingSortDate(meeting);
+          return meetingDate ? meetingDate.getTime() >= now.getTime() : false;
+        }
+
+        if (meetingFilter === 'previous') {
+          const meetingDate = getMeetingSortDate(meeting);
+          return meetingDate ? meetingDate.getTime() < now.getTime() : false;
+        }
+
+        return true;
+      });
+  }, [calendarEvents, meetingFilter]);
+
+  const normalizedMeetings = useMemo(() => {
+    const baseMeetings = shouldLoadMeetings ? normalizedAppMeetings : [];
+    const combined = baseMeetings.concat(normalizedCalendarMeetings);
+    const direction = meetingFilter === 'upcoming' ? 1 : -1;
+
+    return combined.slice().sort((first, second) => {
+      const firstDate = getMeetingSortDate(first);
+      const secondDate = getMeetingSortDate(second);
+      if (!firstDate && !secondDate) {
+        return 0;
+      }
+      if (!firstDate) {
+        return 1;
+      }
+      if (!secondDate) {
+        return -1;
+      }
+      return (firstDate.getTime() - secondDate.getTime()) * direction;
+    });
+  }, [normalizedAppMeetings, normalizedCalendarMeetings, meetingFilter, shouldLoadMeetings]);
+
+  useEffect(() => {
+    if (meetingid) {
+      setSelectedId(meetingid);
+      return;
+    }
+    if (normalizedMeetings?.length) {
+      setSelectedId((prev) => prev ?? normalizedMeetings[0].id);
+      return;
+    }
+    setSelectedId(null);
+  }, [normalizedMeetings, meetingid]);
+
+  useEffect(() => {
+    if (!showActionsMenu) {
+      return undefined;
+    }
+
+    const handlePointerDown = (event) => {
+      if (actionsMenuRef.current && !actionsMenuRef.current.contains(event.target)) {
+        setShowActionsMenu(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+    };
+  }, [showActionsMenu]);
+
   const selectedMeeting = useMemo(
     () => normalizedMeetings.find((meeting) => String(meeting.id) === String(selectedId)),
     [normalizedMeetings, selectedId]
   );
+
+  const isCalendarEventSelected = Boolean(selectedMeeting?.isCalendarEvent);
+
+  const calendarTimeRange = useMemo(() => {
+    if (!selectedMeeting || !selectedMeeting.isCalendarEvent) {
+      return '';
+    }
+
+    const start = selectedMeeting.startTime ? moment(selectedMeeting.startTime) : null;
+    const end = selectedMeeting.endTime ? moment(selectedMeeting.endTime) : null;
+
+    if (selectedMeeting.isAllDay && start) {
+      return `${start.format('DD-MMM-YYYY')} (all day)`;
+    }
+
+    if (start && end) {
+      return `${start.format('DD-MMM-YYYY HH:mm')} - ${end.format('DD-MMM-YYYY HH:mm')}`;
+    }
+
+    if (start) {
+      return start.format('DD-MMM-YYYY HH:mm');
+    }
+
+    return '';
+  }, [selectedMeeting]);
 
   const transcriptState = useMemo(() => {
     if (!selectedMeeting) {
@@ -310,15 +560,34 @@ export default function PreviousMeetings() {
 
     let bufferTranscription = normalizeTranscriptText(selectedMeeting.bufferTranscription);
     let bufferDiarization = normalizeTranscriptText(selectedMeeting.bufferDiarization);
-    const lines = Array.isArray(selectedMeeting.lines) ? selectedMeeting.lines : [];
+    const rawLines = Array.isArray(selectedMeeting.lines) ? selectedMeeting.lines : [];
+
+    // For realtime meetings (actively recording) sort by end time so partial
+    // chunks stream in the right order. For completed meetings sort by start.
+    const isRealtime = selectedMeeting.asrStatus !== 'idle' && selectedMeeting.asrStatus !== 'done';
+    const lines = rawLines.slice().sort((a, b) => {
+      const aVal = isRealtime ? (a?.end ?? a?.start) : (a?.start ?? a?.end);
+      const bVal = isRealtime ? (b?.end ?? b?.start) : (b?.start ?? b?.end);
+      if (aVal == null && bVal == null) return 0;
+      if (aVal == null) return 1;
+      if (bVal == null) return -1;
+      return Number(aVal) - Number(bVal);
+    });
+
     const groups = [];
     const lastTextBySpeaker = new Map();
+    // Maps "speaker:start" → group index so updated ASR chunks (same utterance,
+    // updated text, arriving after another speaker's chunk due to sort order)
+    // are merged back into their original group rather than creating a new box.
+    const groupKeyMap = new Map();
 
     lines.forEach((line) => {
       const speakerValue = Number.isFinite(Number(line?.speaker))
         ? Number(line.speaker)
         : line?.speaker ?? null;
       const text = normalizeTranscriptText(line?.text);
+      const lineStart = line?.start ?? null;
+      const lineEnd = line?.end ?? null;
       const previousText = lastTextBySpeaker.get(speakerValue) || '';
       const trimmedText = trimTranscriptContinuation(previousText, text);
 
@@ -329,21 +598,35 @@ export default function PreviousMeetings() {
         return;
       }
 
-      const lastGroup = groups[groups.length - 1];
-      if (!lastGroup || lastGroup.speaker !== speakerValue) {
-        groups.push({
-          speaker: speakerValue,
-          text: trimmedText,
-          start: line?.start ?? null,
-          end: line?.end ?? null,
-        });
+      // Key identifies a specific utterance segment by speaker + start time.
+      // If two lines share the same speaker and start, the second is an updated
+      // version of the same chunk — merge into the original group in-place.
+      const segmentKey = lineStart != null ? `${speakerValue}:${lineStart}` : null;
+      const existingIdx = segmentKey != null ? groupKeyMap.get(segmentKey) : undefined;
+
+      if (existingIdx !== undefined) {
+        // Updated chunk for an existing segment — patch the original group.
+        const existing = groups[existingIdx];
+        existing.text = mergeTranscriptText(existing.text, trimmedText);
+        if (lineEnd != null) existing.end = lineEnd;
       } else {
-        lastGroup.text = mergeTranscriptText(lastGroup.text, text);
-        if (lastGroup.start == null && line?.start != null) {
-          lastGroup.start = line.start;
-        }
-        if (line?.end != null) {
-          lastGroup.end = line.end;
+        const lastGroup = groups[groups.length - 1];
+        if (lastGroup && lastGroup.speaker === speakerValue) {
+          // Consecutive same-speaker line — extend the current group.
+          lastGroup.text = mergeTranscriptText(lastGroup.text, trimmedText);
+          if (lastGroup.start == null && lineStart != null) lastGroup.start = lineStart;
+          if (lineEnd != null) lastGroup.end = lineEnd;
+          if (segmentKey != null) groupKeyMap.set(segmentKey, groups.length - 1);
+        } else {
+          // New speaker turn — open a fresh group.
+          const newIdx = groups.length;
+          groups.push({
+            speaker: speakerValue,
+            text: trimmedText,
+            start: lineStart,
+            end: lineEnd,
+          });
+          if (segmentKey != null) groupKeyMap.set(segmentKey, newIdx);
         }
       }
 
@@ -377,29 +660,67 @@ export default function PreviousMeetings() {
     setTitleDraft(String(selectedMeeting.title || ''));
   }, [selectedMeeting]);
 
-  const appendMessageToCache = useCallback((meetingId, message) => {
-    queryClient.setQueriesData({ queryKey: ['meetings', 'dummy'] }, (current) => {
-      const currentMeetings = Array.isArray(current) ? current : [];
-      return currentMeetings.map((meeting) => {
-        if (String(meeting.id) !== String(meetingId)) {
-          return meeting;
-        }
-        const messages = Array.isArray(meeting.messages) ? meeting.messages : [];
-        return { ...meeting, messages: [...messages, message] };
-      });
-    });
+  const mutateMessagesInCache = useCallback(
+    (meetingId, transform) => {
+      queryClient.setQueriesData({ queryKey: ['meetings', 'dummy'] }, (current) => {
+        const currentMeetings = Array.isArray(current) ? current : [];
 
-    if (meetingid && String(meetingid) === String(meetingId)) {
-      queryClient.setQueryData(['meeting', meetingid], (current) => {
-        if (!current || String(current.id) !== String(meetingId)) {
-          return current;
-        }
-        const messages = Array.isArray(current.messages) ? current.messages : [];
-        return { ...current, messages: [...messages, message] };
+        return currentMeetings.map((meeting) => {
+          if (String(meeting.id) !== String(meetingId)) {
+            return meeting;
+          }
+          const messages = Array.isArray(meeting.messages) ? meeting.messages : [];
+          return { ...meeting, messages: transform(messages) };
+        });
       });
-    }
-  }, [meetingid, queryClient]);
 
+      if (meetingid && String(meetingid) === String(meetingId)) {
+        queryClient.setQueryData(['meeting', meetingid], (current) => {
+          if (!current || String(current.id) !== String(meetingId)) {
+            return current;
+          }
+          const messages = Array.isArray(current.messages) ? current.messages : [];
+          return { ...current, messages: transform(messages) };
+        });
+      }
+    },
+    [meetingid, queryClient],
+  );
+const appendMessageToCache = useCallback(
+    (meetingId, message) => {
+      mutateMessagesInCache(meetingId, (messages) => [...messages, message]);
+    },
+    [mutateMessagesInCache],
+  );
+
+  // Replace a message identified by predicate with next. If no
+  // existing message matches, next is appended (covers the "first delta
+  // arrives" case where we hadn't created a placeholder yet).
+  const replaceMessageInCache = useCallback(
+    (meetingId, predicate, next) => {
+      mutateMessagesInCache(meetingId, (messages) => {
+        let replaced = false;
+        const out = messages.map((m) => {
+          if (!replaced && predicate(m)) {
+            replaced = true;
+            return next;
+          }
+          return m;
+        });
+        return replaced ? out : [...out, next];
+      });
+    },
+    [mutateMessagesInCache],
+  );
+
+  const removeMessageFromCache = useCallback(
+    (meetingId, predicate) => {
+      mutateMessagesInCache(meetingId, (messages) =>
+        messages.filter((m) => !predicate(m)),
+      );
+    },
+    [mutateMessagesInCache],
+  );
   const renameMeetingInCache = useCallback((meetingId, title) => {
     queryClient.setQueriesData({ queryKey: ['meetings', 'dummy'] }, (current) => {
       const currentMeetings = Array.isArray(current) ? current : [];
@@ -422,7 +743,7 @@ export default function PreviousMeetings() {
   }, [meetingid, queryClient]);
 
   const handleSendMessage = async () => {
-    if (!selectedMeeting || isSending) {
+    if (!selectedMeeting || isSending || selectedMeeting.isCalendarEvent) {
       return;
     }
 
@@ -431,26 +752,166 @@ export default function PreviousMeetings() {
       return;
     }
 
+    const meetingId = selectedMeeting.id;
+    const now = new Date().toISOString();
+
+    const localUserId = `local-user-${Date.now()}`;
+    const localAssistantId = `local-assistant-${Date.now()}`;
+
+    const optimisticUser = {
+      id: localUserId,
+      role: 'user',
+      text: content,
+      time: now,
+    };
+
+    appendMessageToCache(meetingId, optimisticUser);
+
+    // Only append a streaming assistant bubble if we are asking the QA bot
+    if (messageMode === 'qa') {
+      const streamingAssistant = {
+        id: localAssistantId,
+        role: 'assistant',
+        text: '',
+        time: now,
+        streaming: true,
+      };
+      appendMessageToCache(meetingId, streamingAssistant);
+    }
+
+    setDraftMessage('');
     setIsSending(true);
     try {
-      const response = await fetchWithAuth(`/meetings/${selectedMeeting.id}/messages`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content, role: 'user' }),
-      });
+      if (messageMode === 'note') {
+        // --- NOTE MODE ---
+        const response = await fetchWithAuth(`/meetings/${meetingId}/messages`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ content }),
+        });
 
-      const payload = await response.json().catch(() => null);
-      if (payload?.message) {
-        appendMessageToCache(selectedMeeting.id, payload.message);
+        if (response.ok) {
+          const data = await response.json();
+          replaceMessageInCache(
+            meetingId,
+            (m) => m.id === localUserId,
+            data.message,
+          );
+        } else {
+          const errorData = await response.json().catch(() => ({}));
+          console.error('[note] save failed', errorData);
+          removeMessageFromCache(meetingId, (m) => m.id === localUserId);
+        }
+      } else {
+        // --- QA MODE (SSE Stream) ---
+        const response = await fetchWithAuth(`/meetings/${meetingId}/messages`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'text/event-stream',
+          },
+          body: JSON.stringify({ content, mode: 'qa' }),
+        });
+
+        let streamedText = '';
+        let finalAnswer = null;
+        let sawError = null;
+        let wasSaved = false;
+        for await (const evt of parseSseStream(response.body)) {
+          let parsed = null;
+          if (evt.data) {
+            try {
+              parsed = JSON.parse(evt.data);
+            } catch {
+              parsed = null;
+            }
+          }
+
+          if (evt.event === 'user-saved' && parsed?.message) {
+            replaceMessageInCache(meetingId, (m) => m.id === localUserId, parsed.message);
+            continue;
+          }
+
+          if (evt.event === 'delta' && typeof parsed?.text === 'string') {
+            streamedText += parsed.text;
+            replaceMessageInCache(meetingId, (m) => m.id === localAssistantId, {
+              id: localAssistantId,
+              role: 'assistant',
+              text: streamedText,
+              time: now,
+              streaming: true,
+            });
+            continue;
+          }
+
+          if (evt.event === 'done' && typeof parsed?.answer === 'string') {
+            finalAnswer = parsed.answer;
+            continue;
+          }
+
+          if (evt.event === 'saved' && parsed?.message) {
+            // Server confirmed the assistant message is persisted — replace the
+            // optimistic bubble with the real DB record and mark as saved so we
+            // don't run the post-loop fallback (which would append a duplicate).
+            replaceMessageInCache(meetingId, (m) => m.id === localAssistantId, parsed.message);
+            wasSaved = true;
+            continue;
+          }
+
+          if (evt.event === 'error') {
+            sawError = parsed?.message || 'Something went wrong.';
+            continue;
+          }
+        }
+
+        if (sawError) {
+          replaceMessageInCache(meetingId, (m) => m.id === localAssistantId, {
+            id: localAssistantId,
+            role: 'assistant',
+            text: `[error] ${sawError}`,
+            time: now,
+            streaming: false,
+            error: true,
+          });
+        } else if (!wasSaved) {
+          // `saved` event did not fire — use the streamed/final answer as fallback,
+          // or clean up the placeholder if nothing arrived.
+          if (finalAnswer && finalAnswer.trim()) {
+            replaceMessageInCache(meetingId, (m) => m.id === localAssistantId && m.streaming, {
+              id: localAssistantId,
+              role: 'assistant',
+              text: finalAnswer,
+              time: now,
+              streaming: false,
+            });
+          } else {
+            removeMessageFromCache(meetingId, (m) => m.id === localAssistantId);
+          }
+        }
       }
-      setDraftMessage('');
+    } catch (error) {
+      console.error('[qa/note] request failed', error);
+      if (messageMode === 'qa') {
+        replaceMessageInCache(meetingId, (m) => m.id === localAssistantId, {
+          id: localAssistantId,
+          role: 'assistant',
+          text: '[error] Could not reach the service.',
+          time: new Date().toISOString(),
+          streaming: false,
+          error: true,
+        });
+      } else {
+        removeMessageFromCache(meetingId, (m) => m.id === localUserId);
+      }
     } finally {
       setIsSending(false);
     }
   };
 
   const handleDeleteMeeting = useCallback(async () => {
-    if (!selectedMeeting || isDeleting) {
+    if (!selectedMeeting || isDeleting || selectedMeeting.isCalendarEvent) {
       return;
     }
 
@@ -492,7 +953,7 @@ export default function PreviousMeetings() {
   }, [isDeleting, navigate, normalizedMeetings, queryClient, selectedMeeting]);
 
   const handleRenameMeeting = useCallback(async () => {
-    if (!selectedMeeting || isRenaming) {
+    if (!selectedMeeting || isRenaming || selectedMeeting.isCalendarEvent) {
       return;
     }
 
@@ -528,9 +989,16 @@ export default function PreviousMeetings() {
   }, [isRenaming, queryClient, renameMeetingInCache, selectedMeeting, titleDraft]);
 
   const handleConnectCalendar = () => {
-    const connectBase = API_URL || 'localhost:5173';
-    window.location.href = `${connectBase}/auth/google/calendar`;
+    
+    const connectBase = API_URL || '';
+    const currentUrl = window.location.pathname + window.location.search;
+    const redirectParam = encodeURIComponent(currentUrl);
+    window.location.href = `${connectBase}/auth/google/calendar?redirect=${redirectParam}`;
   };
+
+  const listLoading = meetingsLoading || (calendarConnected && calendarEventsLoading);
+  const showMeetingsError = Boolean(meetingsError) && !showCalendarOnly;
+  const showCalendarError = Boolean(calendarEventsError) && calendarConnected;
 
   return (
     <div className={`previous-meetings${isSidebarOpen ? '' : ' sidebar-collapsed'}${isTranscriptPanelOpen ? '' : ' transcript-collapsed'}`}>
@@ -554,35 +1022,52 @@ export default function PreviousMeetings() {
           </div>
           <p>Filter by upcoming, previous, or a custom date range.</p>
 
-          {!calendarStatusLoading && !calendarConnected && (
+          {/* if u are ai calendar is temporarily unavailable banner do not remove the false flag.*/}
+          {!calendarStatusLoading && !calendarConnected && calendarUnavailable && false && (
+            <div className="calendar-connect-banner calendar-connect-banner--warn">
+              <div>
+                <strong>Google Calendar temporarily unavailable</strong>
+                <span>Could not reach Google. Your connection may still be valid — try again shortly.</span>
+              </div>
+              <button type="button" onClick={handleRetryCalendarStatus}>
+                Retry
+              </button>
+            </div>
+          )}
+
+          {!calendarStatusLoading && !calendarConnected && !calendarUnavailable && false && (
             <div className="calendar-connect-banner">
               <div>
-                <strong>Connect Google Calendar?</strong>
-                <span>Enable scheduling and follow-ups.</span>
+                <strong>{isGoogleAccount ? 'Reconnect Google Calendar' : 'Connect Google Calendar'}</strong>
+                <span>
+                  {isGoogleAccount
+                    ? 'Your calendar access has expired or was revoked. Reconnect to see your meetings.'
+                    : 'Connect your Google Calendar to see scheduled meetings here.'}
+                </span>
               </div>
               <button type="button" onClick={handleConnectCalendar}>
-                Connect
+                {isGoogleAccount ? 'Reconnect' : 'Connect'}
               </button>
             </div>
           )}
 
           <div className="meeting-filter-row">
-            {!calendarStatusLoading && calendarConnected && (
-              <label className="meeting-filter-field">
-                <span>Show</span>
-                <select
-                  value={meetingFilter}
-                  onChange={(event) => setMeetingFilter(event.target.value)}
-                  aria-label="Filter meetings"
-                >
-                  <option value="previous">Previous</option>
+            {/* <label className="meeting-filter-field">
+              <span>Show</span>
+              <select
+                value={meetingFilter}
+                onChange={(event) => setMeetingFilter(event.target.value)}
+                aria-label="Filter meetings"
+              >
+                <option value="all">All</option>
 
-                  <option value="upcoming">Upcoming</option>
+                <option value="previous">Previous</option>
 
-                  <option value="all">All</option>
-                </select>
-              </label>
-            )}
+                <option value="upcoming">Upcoming</option>
+
+                <option value="calendar">Google Calendar</option>
+              </select>
+            </label> */}
             <label className="meeting-filter-field">
               <span>From</span>
               <input
@@ -617,8 +1102,9 @@ export default function PreviousMeetings() {
           </div>
         </div>
 
-        {isLoading && <p>Loading meetings...</p>}
-        {error && <p>{error.message || 'Unable to load meetings'}</p>}
+        {listLoading && <p>Loading meetings...</p>}
+        {showMeetingsError && <p>{meetingsError.message || 'Unable to load meetings'}</p>}
+        {showCalendarError && <p>{calendarEventsError.message || 'Unable to load Google Calendar events'}</p>}
         <div className="meeting-cards">
           {normalizedMeetings.map((meeting, index) => (
             <button
@@ -628,14 +1114,41 @@ export default function PreviousMeetings() {
               style={{ animation: `fadeIn 0.5s ease-out ${index * 0.05}s both` }}
               onClick={() => {
                 setSelectedId(meeting.id);
-                queryClient.invalidateQueries({ queryKey: ['meeting', String(meeting.id)] });
-                navigate(`/meetings/${meeting.id}`);
                 setShowAttachMenu(false);
                 setShowActionsMenu(false);
+                if (meeting.isCalendarEvent) {
+                  return;
+                }
+                queryClient.invalidateQueries({ queryKey: ['meeting', String(meeting.id)] });
+                navigate(`/meetings/${meeting.id}`);
               }}
             >
               <div className="meeting-card-header">
-                <h3>{meeting.title}</h3>
+                <div className="meeting-card-title">
+                  <div className="meeting-card-title-row">
+                    <h3>{meeting.title}</h3>
+                    {meeting.isCalendarEvent && meeting.meetLink && (
+                      <button
+                        type="button"
+                        className="meeting-card-meet"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openMeetLink(meeting.meetLink);
+                        }}
+                        aria-label="Open Google Meet"
+                        title="Open Google Meet"
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                          <path
+                            d="M4 7.5C4 6.12 5.12 5 6.5 5h6c1.38 0 2.5 1.12 2.5 2.5v1.4l3.2-2.02c.96-.6 2.2.08 2.2 1.2v8.84c0 1.12-1.24 1.8-2.2 1.2L15 16.1v1.4c0 1.38-1.12 2.5-2.5 2.5h-6C5.12 20 4 18.88 4 17.5v-10Z"
+                            fill="currentColor"
+                          />
+                        </svg>
+                        <span>Meet</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
                 <span className="meeting-date">{moment(meeting.date).format('DD-MMM-YYYY')}</span>
               </div>
               <p className="meeting-summary">{meeting.summary}</p>
@@ -699,51 +1212,64 @@ export default function PreviousMeetings() {
                   ))}
                 </div>
                 <div className="meeting-header-actions-row">
-                  <button
-                    type="button"
-                    className={`meeting-transcript-toggle${isTranscriptPanelOpen ? ' is-open' : ''}`}
-                    onClick={() => setIsTranscriptPanelOpen((prev) => !prev)}
-                    aria-label={isTranscriptPanelOpen ? 'Hide transcript panel' : 'Open transcript panel'}
-                    aria-pressed={isTranscriptPanelOpen}
-                  >
-                    {isTranscriptPanelOpen ? 'Hide transcript' : 'Transcript'}
-                  </button>
-                  <div className="meeting-actions-menu-wrapper" ref={actionsMenuRef}>
+                  {isCalendarEventSelected && selectedMeeting.meetLink && (
                     <button
                       type="button"
-                      className="meeting-actions-trigger"
-                      aria-label="Open meeting actions"
-                      aria-expanded={showActionsMenu}
-                      onClick={() => setShowActionsMenu((prev) => !prev)}
+                      className="meeting-meet-button"
+                      onClick={() => openMeetLink(selectedMeeting.meetLink)}
                     >
-                      <span aria-hidden="true">⋮</span>
+                      Open Meet
                     </button>
-                    {showActionsMenu && (
-                      <div className="meeting-actions-popup">
-                        <button
-                          type="button"
-                          className="rename-meeting-button"
-                          onClick={() => {
-                            setShowActionsMenu(false);
-                            setRenameError('');
-                            setTitleDraft(String(selectedMeeting.title || ''));
-                            setIsEditingTitle(true);
-                          }}
-                          disabled={isRenaming}
-                        >
-                          Rename meeting
-                        </button>
-                        <button
-                          type="button"
-                          className="delete-meeting-button"
-                          onClick={handleDeleteMeeting}
-                          disabled={isDeleting}
-                        >
-                          {isDeleting ? 'Deleting...' : 'Delete meeting'}
-                        </button>
-                      </div>
-                    )}
-                  </div>
+                  )}
+                  {!isCalendarEventSelected && (
+                    <button
+                      type="button"
+                      className={`meeting-transcript-toggle${isTranscriptPanelOpen ? ' is-open' : ''}`}
+                      onClick={() => setIsTranscriptPanelOpen((prev) => !prev)}
+                      aria-label={isTranscriptPanelOpen ? 'Hide transcript panel' : 'Open transcript panel'}
+                      aria-pressed={isTranscriptPanelOpen}
+                    >
+                      {isTranscriptPanelOpen ? 'Hide transcript' : 'Transcript'}
+                    </button>
+                  )}
+                  {!isCalendarEventSelected && (
+                    <div className="meeting-actions-menu-wrapper" ref={actionsMenuRef}>
+                      <button
+                        type="button"
+                        className="meeting-actions-trigger"
+                        aria-label="Open meeting actions"
+                        aria-expanded={showActionsMenu}
+                        onClick={() => setShowActionsMenu((prev) => !prev)}
+                      >
+                        <span aria-hidden="true">⋮</span>
+                      </button>
+                      {showActionsMenu && (
+                        <div className="meeting-actions-popup">
+                          <button
+                            type="button"
+                            className="rename-meeting-button"
+                            onClick={() => {
+                              setShowActionsMenu(false);
+                              setRenameError('');
+                              setTitleDraft(String(selectedMeeting.title || ''));
+                              setIsEditingTitle(true);
+                            }}
+                            disabled={isRenaming}
+                          >
+                            Rename meeting
+                          </button>
+                          <button
+                            type="button"
+                            className="delete-meeting-button"
+                            onClick={handleDeleteMeeting}
+                            disabled={isDeleting}
+                          >
+                            {isDeleting ? 'Deleting...' : 'Delete meeting'}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             </header>
@@ -751,8 +1277,14 @@ export default function PreviousMeetings() {
             {deleteError && <p className="recap-summary">{deleteError}</p>}
 
             <div className="meeting-detail-summary">
-              <h4>Summary</h4>
-              <p>{selectedMeeting.summary}</p>
+              <h4>{isCalendarEventSelected ? 'Details' : 'Summary'}</h4>
+              <p>{selectedMeeting.summary || (isCalendarEventSelected ? 'No details available.' : '')}</p>
+              {isCalendarEventSelected && calendarTimeRange && (
+                <p className="meeting-calendar-detail">{calendarTimeRange}</p>
+              )}
+              {isCalendarEventSelected && selectedMeeting.location && (
+                <p className="meeting-calendar-detail">Location: {selectedMeeting.location}</p>
+              )}
             </div>
 
             {!!selectedMeeting.actionItems?.length && (
@@ -766,57 +1298,92 @@ export default function PreviousMeetings() {
               </div>
             )}
 
-            <div className="meeting-messages">
-              {selectedMeeting.messages.map((message) => (
-                <div
-                  key={message.id}
-                  className={`message-row ${message.role === 'assistant' ? 'assistant' : 'user'}`}
-                >
-                  <div className="message-bubble">
-                    <p>{message.text}</p>
-                    <span className="message-time">{message.time ? moment(message.time).format('DD-MMM-YYYY HH:mm') : ''}</span>
-                  </div>
+            {!isCalendarEventSelected ? (
+              <>
+                <div className="meeting-messages">
+                  {selectedMeeting.messages.map((message) => (
+                    <div
+                      key={message.id}
+                      className={`message-row ${message.role === 'assistant' ? 'assistant' : 'user'}`}
+                    >
+                     <div
+                    className={`message-bubble${message.streaming ? ' streaming' : ''}${message.error ? ' error' : ''
+                      }`}
+                  >
+                    <p>
+                      {message.text}
+                      {message.streaming ? <span className="cursor-blink">▍</span> : null}
+                    </p>
+                        <span className="message-time">{message.time ? moment(message.time).format('DD-MMM-YYYY HH:mm') : ''}</span>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
 
-            <div className="meeting-input">
-              <button
-                type="button"
-                className="attach-button"
-                onClick={() => setShowAttachMenu((prev) => !prev)}
-                aria-label="Open attachments"
-              >
-                +
-              </button>
-              {showAttachMenu && (
-                <div className="attach-popup">
-                  <button type="button">Upload file</button>
-                  <button type="button">Add note</button>
-                  {calendarConnected && <button type="button">Schedule follow-up</button>}
-                </div>
-              )}
-              <input
-                type="text"
-                placeholder="Ask a question about this meeting..."
-                value={draftMessage}
-                onChange={(event) => setDraftMessage(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') {
-                    event.preventDefault();
-                    handleSendMessage();
+                <div className="meeting-input">
+                  <button
+                    type="button"
+                    className="attach-button"
+                    onClick={() => setShowAttachMenu((prev) => !prev)}
+                    aria-label="Open attachments"
+                  >
+                    +
+                  </button>
+                  {showAttachMenu && (
+                    <div className="attach-popup">
+                      <button type="button">Upload file</button>
+                      <button type="button">Add note</button>
+                      {calendarConnected && <button type="button">Schedule follow-up</button>}
+                    </div>
+                  )
+                  
                   }
-                }}
-              />
-              <button
-                type="button"
-                className="send-button"
-                onClick={handleSendMessage}
-                disabled={isSending}
-              >
-                Send
-              </button>
-            </div>
+                  {/* --- NEW DROPDOWN TOGGLE --- */}
+              <div className="message-mode-toggle">
+                <select
+                  value={messageMode}
+                  onChange={(e) => setMessageMode(e.target.value)}
+                  aria-label="Message Mode"
+                  style={{
+                    border: 'none',
+                    background: 'transparent',
+                    color: 'var(--text-secondary, #666)',
+                    outline: 'none',
+                    cursor: 'pointer',
+                    padding: '4px',
+                    marginRight: '8px',
+                    fontSize: '0.9rem'
+                  }}
+                >
+                <option value="qa">Ask QA</option>
+                  <option value="note">Add Note</option>
+                </select>
+              </div>
+                  <input
+                    type="text"
+                    placeholder={messageMode === 'qa' ? "Ask a question about this meeting..." : "Type a note to save..."}
+                    value={draftMessage}
+                    onChange={(event) => setDraftMessage(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault();
+                        handleSendMessage();
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="send-button"
+                    onClick={handleSendMessage}
+                    disabled={isSending}
+                  >
+                    Send
+                  </button>
+                </div>
+              </>
+            ) : (
+              <p className="meeting-calendar-note">Google Calendar events do not have transcripts or messages yet.</p>
+            )}
           </>
         ) : (
           <div className="meeting-empty">
@@ -840,47 +1407,51 @@ export default function PreviousMeetings() {
             </button>
           </div>
           {selectedMeeting ? (
-            <>
-              <div className="meeting-transcript-body">
-                {transcriptState.groups.map((group, groupIndex) => {
-                  const isLastGroup = groupIndex === transcriptState.groups.length - 1;
-                  const timeLabel =
-                    group?.start != null && group?.end != null ? `${group.start} - ${group.end}` : '';
-                  const speakerLabel =
-                    Number(group?.speaker) === -2
-                      ? 'Silence'
-                      : `Speaker ${Number.isFinite(Number(group?.speaker)) ? Number(group.speaker) : '-'}`;
-                  const showMeta = !(Number(group?.speaker) === -1 && !timeLabel);
-                  const bufferParts = [
-                    transcriptState.bufferDiarization,
-                    transcriptState.bufferTranscription,
-                  ].filter(Boolean);
+            selectedMeeting.isCalendarEvent ? (
+              <p className="meeting-transcript-empty">No transcript available for Google Calendar events.</p>
+            ) : (
+              <>
+                <div className="meeting-transcript-body">
+                  {transcriptState.groups.map((group, groupIndex) => {
+                    const isLastGroup = groupIndex === transcriptState.groups.length - 1;
+                    const timeLabel =
+                      group?.start != null && group?.end != null ? `${group.start} - ${group.end}` : '';
+                    const speakerLabel =
+                      Number(group?.speaker) === -2
+                        ? 'Silence'
+                        : `Speaker ${Number.isFinite(Number(group?.speaker)) ? Number(group.speaker) : '-'}`;
+                    const showMeta = !(Number(group?.speaker) === -1 && !timeLabel);
+                    const bufferParts = [
+                      transcriptState.bufferDiarization,
+                      transcriptState.bufferTranscription,
+                    ].filter(Boolean);
 
-                  return (
-                    <article className="meeting-transcript-line" key={`speaker-${group.speaker}-${groupIndex}`}>
-                      {showMeta && (
-                        <div className="meeting-transcript-meta">
-                          <span>{speakerLabel}</span>
-                          {timeLabel && <span>{timeLabel}</span>}
-                        </div>
-                      )}
-                      <p>
-                        {group.text}
-                        {isLastGroup &&
-                          bufferParts.map((part, idx) => (
-                            <span className="meeting-transcript-buffer-inline" key={`buffer-${idx}`}>
-                              {(group.text || idx > 0) ? ' ' : ''}{part}
-                            </span>
-                          ))}
-                      </p>
-                    </article>
-                  );
-                })}
-                {!transcriptState.groups.length && (
-                  <p className="meeting-transcript-empty">No transcript yet.</p>
-                )}
-              </div>
-            </>
+                    return (
+                      <article className="meeting-transcript-line" key={`speaker-${group.speaker}-${groupIndex}`}>
+                        {showMeta && (
+                          <div className="meeting-transcript-meta">
+                            <span>{speakerLabel}</span>
+                            {timeLabel && <span>{timeLabel}</span>}
+                          </div>
+                        )}
+                        <p>
+                          {group.text}
+                          {isLastGroup &&
+                            bufferParts.map((part, idx) => (
+                              <span className="meeting-transcript-buffer-inline" key={`buffer-${idx}`}>
+                                {(group.text || idx > 0) ? ' ' : ''}{part}
+                              </span>
+                            ))}
+                        </p>
+                      </article>
+                    );
+                  })}
+                  {!transcriptState.groups.length && (
+                    <p className="meeting-transcript-empty">No transcript yet.</p>
+                  )}
+                </div>
+              </>
+            )
           ) : (
             <p className="meeting-transcript-empty">Select a meeting to view transcript.</p>
           )}

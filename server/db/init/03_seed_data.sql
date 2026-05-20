@@ -11,17 +11,20 @@ BEGIN
     RAISE EXCEPTION 'users table missing username column';
   END IF;
 
-  INSERT INTO users (name, email, username, password)
-  VALUES
-    ('Admin User', 'admin@meetai.local', 'admin', 'scrypt$16384$8$1$I2YIvX09PRmLayMTWYyNjQ$-yGfxtKDkmfaqePKWxNtmLhrQl_5wQYD0J3QWEVj1mOlaoSTKW5Y36Mdsgg9aR2xqKm4biEfS4RvUlNKbLDAwg'),
-    ('Demo User', 'demo@meetai.local', 'demo', 'scrypt$16384$8$1$fKrD0f0a0Jz1zEjK7keM3Q$TMiu5dRJpAwgRwHZaZ9I14R0PxKz_WDd_HOqoGFqQ_TYKfRrSUi0mzu8OY8qOp-d2QcP69q3nzAy3_JZSF9E6w')
+  INSERT INTO users (name, email, username)
+  VALUES ('Admin User', 'admin@meet.ai', 'admin')
   ON CONFLICT (username) DO UPDATE
-  SET
-    name = EXCLUDED.name,
-    email = EXCLUDED.email,
-    password = EXCLUDED.password;
+  SET name  = EXCLUDED.name,
+      email = EXCLUDED.email;
 
   SELECT id INTO admin_id FROM users WHERE username = 'admin' LIMIT 1;
+
+  -- Seed admin password into auth_providers
+  -- Default password is 'admin123'
+  INSERT INTO auth_providers (user_id, provider, provider_user_id, password_hash)
+  VALUES (admin_id, 'password', admin_id::text, 'scrypt$16384$8$1$I2YIvX09PRmLayMTWYyNjQ$-yGfxtKDkmfaqePKWxNtmLhrQl_5wQYD0J3QWEVj1mOlaoSTKW5Y36Mdsgg9aR2xqKm4biEfS4RvUlNKbLDAwg')
+  ON CONFLICT (user_id, provider) DO UPDATE
+  SET password_hash = EXCLUDED.password_hash;
 
   IF admin_id IS NOT NULL AND NOT EXISTS (
     SELECT 1 FROM meetings m

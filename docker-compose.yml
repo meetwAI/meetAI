@@ -15,14 +15,21 @@ services:
     build:
       context: ./server
       dockerfile: Dockerfile
-    command: node auth-service/index.js
+    command: node --inspect=0.0.0.0:9229 auth-service/index.js
     env_file:
       - ./server/.env
     environment:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       DATABASE_URL: postgresql://meetai:meetai_pass@postgres:5432/meetai_dev
+      # Keep in sync with gateway's AUTH_SERVICE_URL protocol.
+      # Default to true because gateway uses https://auth-service:4020.
+      AUTH_USE_HTTPS: ${AUTH_USE_HTTPS:-true}
+    volumes:
+      - ./localhost.pem:/app/localhost.pem:ro
+      - ./localhost-key.pem:/app/localhost-key.pem:ro
     ports:
       - "4020:4020"
+      - "9229:9229"
     depends_on:
       redis:
         condition: service_healthy
@@ -34,8 +41,9 @@ services:
           "CMD",
           "node",
           "-e",
-          "require('http').get('http://localhost:4020/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))",
+          "const h=require(process.env.AUTH_USE_HTTPS==='true'?'https':'http');h.get((process.env.AUTH_USE_HTTPS==='true'?'https':'http')+'://localhost:4020/health',{rejectUnauthorized:false},r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))",
         ]
+
       interval: 5s
       timeout: 3s
       retries: 20
@@ -60,6 +68,7 @@ services:
       - ./server/.env
     environment:
       DATABASE_URL: postgresql://meetai:meetai_pass@postgres:5432/meetai_dev
+      QA_SERVICE_URL: http://qa-service:8100
     ports:
       - "4001:4001"
     healthcheck:
@@ -86,6 +95,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      qa-service:
+        condition: service_healthy
     restart: unless-stopped
 
   gateway:
@@ -96,12 +107,15 @@ services:
     env_file:
       - ./server/.env
     environment:
-      AUTH_SERVICE_URL: http://auth-service:4020
+      AUTH_SERVICE_URL: https://auth-service:4020
       MEETING_SERVICE_URL: http://meeting-service:4001
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       AI_SERVICE_WS_URL: ws://ai-gateway:8000/asr
     ports:
       - "4010:4010"
+    volumes:
+      - ./localhost.pem:/app/localhost.pem:ro
+      - ./localhost-key.pem:/app/localhost-key.pem:ro
     depends_on:
       redis:
         condition: service_healthy
@@ -117,7 +131,7 @@ services:
           "CMD",
           "node",
           "-e",
-          "require('http').get('http://localhost:4010/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))",
+          "const h=require(process.env.AUTH_USE_HTTPS==='true'?'https':'http');h.get((process.env.AUTH_USE_HTTPS==='true'?'https':'http')+'://localhost:4010/health',{rejectUnauthorized:false},r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))",
         ]
       interval: 5s
       timeout: 3s
@@ -161,6 +175,39 @@ services:
       retries: 20
     restart: unless-stopped
 
+  embedder:
+    build:
+      context: ./CHECKPOINT2/src
+      dockerfile: deploy/Dockerfile
+    command: python3 -m src.embedder
+    environment:
+      LOG_LEVEL: INFO
+      EMBEDDER_PORT: 8200
+      EMBEDDINGS_PREFER_LOCAL: "true"
+      HF_HOME: /root/.cache/huggingface
+      HUGGINGFACE_HUB_CACHE: /root/.cache/huggingface/hub
+      TRANSFORMERS_CACHE: /root/.cache/huggingface/transformers
+      SENTENCE_TRANSFORMERS_HOME: /root/.cache/huggingface/sentence_transformers
+      TORCH_HOME: /root/.cache/huggingface/torch
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+    ports:
+      - "8200:8200"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import json,urllib.request,sys; data=json.load(urllib.request.urlopen('http://localhost:8200/health', timeout=3)); sys.exit(0 if data.get('model_loaded') else 1)",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10m
+    gpus: all
+    restart: unless-stopped
+
   ai-worker:
     build:
       context: ./CHECKPOINT2/src
@@ -168,14 +215,50 @@ services:
     command: python3 -m src.app.worker
     environment:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      DATABASE_URL: postgresql://meetai:meetai_pass@postgres:5432/meetai_dev
+      EMBED_SERVICE_URL: http://embedder:8200
       NUM_WORKERS: 1
       WORKER_ID: 0
       DIARIZATION_ENABLED: "true"
       LOG_LEVEL: INFO
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
     depends_on:
       redis:
         condition: service_healthy
+      embedder:
+        condition: service_healthy
     gpus: all
+    restart: unless-stopped
+
+  qa-service:
+    build:
+      context: ./CHECKPOINT2/src
+      dockerfile: deploy/Dockerfile
+    command: python3 -m uvicorn src.qa.server:app --host 0.0.0.0 --port 8100
+    env_file:
+      - ./CHECKPOINT2/src/.env
+    environment:
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      DATABASE_URL: postgresql://meetai:meetai_pass@postgres:5432/meetai_dev
+      EMBED_SERVICE_URL: http://embedder:8200
+    depends_on:
+      postgres:
+        condition: service_healthy
+      embedder:
+        condition: service_healthy
+    gpus: all
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import urllib.request,sys;sys.exit(0 if urllib.request.urlopen('http://localhost:8100/health', timeout=3).getcode()==200 else 1)",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
     restart: unless-stopped
 
   web:
@@ -186,7 +269,10 @@ services:
     environment:
       CHOKIDAR_USEPOLLING: "true"
       HOST: 0.0.0.0
-      VITE_AUTH_URL: http://localhost:4010
+      # Frontend API base URL (used by fetchWithAuth).
+      VITE_AUTH_URL: ${VITE_AUTH_URL:-https://localhost:4010}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-https://localhost:5173}
+      VITE_AUTH_USE_HTTPS: "true"
     ports:
       - "5173:5173"
     develop:
@@ -202,6 +288,11 @@ services:
     depends_on:
       gateway:
         condition: service_healthy
+    volumes:
+      - ./client/meetai-web:/app
+      - /app/node_modules
+      - ./localhost.pem:/app/localhost.pem:ro
+      - ./localhost-key.pem:/app/localhost-key.pem:ro
     restart: unless-stopped
 
   postgres:
@@ -228,3 +319,4 @@ services:
 
 volumes:
   pgdata:
+  hf-cache:
