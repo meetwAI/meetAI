@@ -1,7 +1,12 @@
 .env*
 CHECKPOINT1/
 docker-compose.mac.yml
-.DS_Store
 .vscode/settings.json
-client/.DS_Store
+
+# macOS system files
 .DS_Store
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
