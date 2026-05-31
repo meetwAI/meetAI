@@ -150,7 +150,7 @@ services:
 
   ai-gateway:
     build:
-      context: ./CHECKPOINT2/src
+      context: ./ai-engine/src
       dockerfile: deploy/Dockerfile
     command: python3 -m src.app.server
     environment:
@@ -177,7 +177,7 @@ services:
 
   embedder:
     build:
-      context: ./CHECKPOINT2/src
+      context: ./ai-engine/src
       dockerfile: deploy/Dockerfile
     command: python3 -m src.embedder
     environment:
@@ -210,7 +210,7 @@ services:
 
   ai-worker:
     build:
-      context: ./CHECKPOINT2/src
+      context: ./ai-engine/src
       dockerfile: deploy/Dockerfile
     command: python3 -m src.app.worker
     environment:
@@ -233,11 +233,11 @@ services:
 
   qa-service:
     build:
-      context: ./CHECKPOINT2/src
+      context: ./ai-engine/src
       dockerfile: deploy/Dockerfile
     command: python3 -m uvicorn src.qa.server:app --host 0.0.0.0 --port 8100
     env_file:
-      - ./CHECKPOINT2/src/.env
+      - ./ai-engine/src/.env
     environment:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       DATABASE_URL: postgresql://meetai:meetai_pass@postgres:5432/meetai_dev

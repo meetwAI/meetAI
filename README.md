@@ -33,7 +33,7 @@ Services started:
 Redis URL defaults are unified in compose:
 - All services: `${REDIS_URL:-redis://redis:6379/0}`
 
-AI realtime service source is located at `CHECKPOINT2/src`.
+AI realtime service source is located at `ai-engine/src`.
 
 Stop all services:
 

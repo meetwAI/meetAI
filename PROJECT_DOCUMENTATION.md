@@ -4,14 +4,14 @@ This document summarizes the repository, how to run it, and how to read and upda
 
 **Project Overview**:
 - **Purpose**: meetAI demo app — services: auth, gateway, meeting-service, and a React frontend.
-- **Location**: top-level compose and services live in `server`, `CHECKPOINT2/src`, and `client/meetai-web`. See [docker-compose.yml](docker-compose.yml).
+- **Location**: top-level compose and services live in `server`, `ai-engine/src`, and `client/meetai-web`. See [docker-compose.yml](docker-compose.yml).
 
 **Services**:
 - **Postgres**: database built with pgvector (local Docker build at `server/db/postgres/Dockerfile`). Init SQL scripts are in [server/db/init](server/db/init).
 - **Auth service**: `server/auth-service` — login and token logic.
 - **Meeting service**: `server/meeting-service` — meeting read/write endpoints.
 - **Gateway**: `server/gateway` — proxies API requests to services.
-- **AI realtime service**: `CHECKPOINT2/src` — websocket ASR gateway + worker (Redis streams).
+- **AI realtime service**: `ai-engine/src` — websocket ASR gateway + worker (Redis streams).
 - **Frontend**: `client/meetai-web` — React + Vite app.
 
 **Redis defaults**:
