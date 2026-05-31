@@ -7,6 +7,7 @@ const os = require('os');
 const { Server } = require('socket.io');
 const WebSocket = require('ws');
 const { requireEnv, requireNumberEnv } = require('../config/env');
+const { getRedisClient, ensureRedisReady } = require('../config/redis');
 const { loginRateLimiter } = require('./rate-limiters/loginRateLimiter');
 
 const PORT = requireNumberEnv('GATEWAY_PORT');
@@ -15,6 +16,14 @@ const AUTH_SERVICE_URL = requireEnv('AUTH_SERVICE_URL');
 const FRONTEND_ORIGIN = requireEnv('FRONTEND_ORIGIN');
 const AI_SERVICE_WS_URL = process.env.AI_SERVICE_WS_URL || 'ws://localhost:8000/asr';
 const useHttps = process.env.AUTH_USE_HTTPS === 'true';
+const MEETING_QA_CACHE_TTL_SECONDS = 300;
+const MEETING_QA_CACHE_PREFIX = 'meeting:qa:';
+const MEETING_QA_MAX_SPEAKERS = 4;
+
+const meetingCacheClient = getRedisClient({
+  cacheKey: 'gateway',
+  serviceName: 'gateway',
+});
 
 const app = express();
 app.use(
@@ -181,6 +190,331 @@ const extractTranscriptText = (payload = {}) => {
     return `${committedText} ${bufferText}`.trim();
   }
   return committedText || bufferText;
+};
+
+const areArraysEqual = (left = [], right = []) => {
+  if (left.length !== right.length) {
+    return false;
+  }
+  for (let i = 0; i < left.length; i += 1) {
+    if (left[i] !== right[i]) {
+      return false;
+    }
+  }
+  return true;
+};
+
+const normalizeSpeakers = (participants = [], lines = []) => {
+  const normalizedParticipants = Array.isArray(participants)
+    ? participants.map((entry) => String(entry || '').trim()).filter(Boolean)
+    : [];
+  if (normalizedParticipants.length) {
+    return normalizedParticipants;
+  }
+
+  const seen = new Set();
+  const derived = [];
+  if (Array.isArray(lines)) {
+    for (const line of lines) {
+      const raw = line?.speaker;
+      if (raw == null) {
+        continue;
+      }
+      const speaker = String(raw).trim();
+      if (!speaker || seen.has(speaker)) {
+        continue;
+      }
+      seen.add(speaker);
+      derived.push(speaker);
+    }
+  }
+
+  return derived;
+};
+
+const buildSpeakerMapFromList = (speakers = []) => {
+  const list = Array.isArray(speakers) ? speakers : [];
+  const map = {};
+  const limit = Math.min(list.length, MEETING_QA_MAX_SPEAKERS);
+  for (let i = 0; i < limit; i += 1) {
+    const value = String(list[i] || '').trim();
+    if (value) {
+      map[`speaker_${i + 1}`] = value;
+    }
+  }
+  return map;
+};
+
+const getTranscriptSpeakerCount = (lines = []) => {
+  if (!Array.isArray(lines)) {
+    return 0;
+  }
+  const seen = new Set();
+  for (const line of lines) {
+    const raw = line?.speaker;
+    if (raw == null) {
+      continue;
+    }
+    const numeric = Number(raw);
+    if (Number.isFinite(numeric) && numeric < 0) {
+      continue;
+    }
+    const key = String(raw).trim();
+    if (!key) {
+      continue;
+    }
+    seen.add(key);
+  }
+  return seen.size;
+};
+
+const normalizeSpeakerMap = (value = {}) => {
+  if (Array.isArray(value)) {
+    return buildSpeakerMapFromList(value);
+  }
+  if (!value || typeof value !== 'object') {
+    return {};
+  }
+  const map = {};
+  for (let i = 1; i <= MEETING_QA_MAX_SPEAKERS; i += 1) {
+    const key = `speaker_${i}`;
+    if (!Object.prototype.hasOwnProperty.call(value, key)) {
+      continue;
+    }
+    const trimmed = String(value[key] || '').trim();
+    if (trimmed) {
+      map[key] = trimmed;
+    }
+  }
+  return map;
+};
+
+const areSpeakerMapsEqual = (left = {}, right = {}) => {
+  const normalizedLeft = normalizeSpeakerMap(left);
+  const normalizedRight = normalizeSpeakerMap(right);
+  const leftKeys = Object.keys(normalizedLeft);
+  const rightKeys = Object.keys(normalizedRight);
+  if (leftKeys.length !== rightKeys.length) {
+    return false;
+  }
+  for (const key of leftKeys) {
+    if (normalizedLeft[key] !== normalizedRight[key]) {
+      return false;
+    }
+  }
+  return true;
+};
+
+const fillSpeakerMap = (speakerMap = {}, count = 0) => {
+  const normalized = normalizeSpeakerMap(speakerMap);
+  const limit = Math.min(Math.max(0, count), MEETING_QA_MAX_SPEAKERS);
+  const filled = {};
+  for (let i = 1; i <= limit; i += 1) {
+    const key = `speaker_${i}`;
+    filled[key] = normalized[key] || `Speaker ${i}`;
+  }
+  return filled;
+};
+
+const buildSpeakerMap = (participants = [], lines = []) =>
+  buildSpeakerMapFromList(normalizeSpeakers(participants, lines));
+
+const computeDurationMs = ({ startTime, endTime }) => {
+  const startMs = Date.parse(startTime);
+  if (!Number.isFinite(startMs)) {
+    return 0;
+  }
+
+  const endMs = Date.parse(endTime);
+  const effectiveEndMs = Number.isFinite(endMs) ? endMs : Date.now();
+  return Math.max(0, effectiveEndMs - startMs);
+};
+
+const fetchMeetingMetadata = ({ meetingId, userId, authToken }) =>
+  new Promise((resolve) => {
+    const targetUrl = new URL(`/meetings/${encodeURIComponent(meetingId)}`, MEETING_SERVICE_URL);
+    const client = targetUrl.protocol === 'https:' ? https : http;
+
+    const proxyReq = client.request(
+      targetUrl,
+      {
+        method: 'GET',
+        rejectUnauthorized: false,
+        headers: {
+          Accept: 'application/json',
+          Authorization: authToken ? `Bearer ${authToken}` : '',
+          'x-user-id': String(userId),
+        },
+      },
+      (proxyRes) => {
+        let data = '';
+        proxyRes.on('data', (chunk) => {
+          data += chunk;
+        });
+        proxyRes.on('end', () => {
+          if (proxyRes.statusCode !== 200) {
+            resolve(null);
+            return;
+          }
+
+          try {
+            resolve(JSON.parse(data || '{}'));
+          } catch (_error) {
+            resolve(null);
+          }
+        });
+      },
+    );
+
+    proxyReq.on('error', (error) => {
+      console.warn('[gateway] meeting metadata fetch failed', error);
+      resolve(null);
+    });
+    proxyReq.end();
+  });
+
+const persistMeetingSpeakers = ({ meetingId, userId, authToken, speakers }) =>
+  new Promise((resolve) => {
+    const targetUrl = new URL(`/meetings/${encodeURIComponent(meetingId)}/speakers`, MEETING_SERVICE_URL);
+    const client = targetUrl.protocol === 'https:' ? https : http;
+    const body = JSON.stringify({ speakers });
+
+    const proxyReq = client.request(
+      targetUrl,
+      {
+        method: 'PATCH',
+        rejectUnauthorized: false,
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+          Authorization: authToken ? `Bearer ${authToken}` : '',
+          'x-user-id': String(userId),
+        },
+      },
+      (proxyRes) => {
+        proxyRes.resume();
+        resolve(proxyRes.statusCode === 200);
+      },
+    );
+
+    proxyReq.on('error', (error) => {
+      console.warn('[gateway] failed to persist speakers in meeting-service', error);
+      resolve(false);
+    });
+
+    proxyReq.write(body);
+    proxyReq.end();
+  });
+
+const updateMeetingQaCache = async ({
+  meetingId,
+  userId,
+  authToken,
+  speakersOverride,
+  hasSpeakersOverride = false,
+}) => {
+  try {
+    const redisReady = await ensureRedisReady(meetingCacheClient, 'gateway');
+    if (!redisReady) {
+      console.warn('[gateway] redis not ready; skipping QA meeting cache');
+      return null;
+    }
+
+    const cacheKey = `${MEETING_QA_CACHE_PREFIX}${meetingId}`;
+    let existingParsed = null;
+    try {
+      const existing = await meetingCacheClient.get(cacheKey);
+      if (existing) {
+        existingParsed = JSON.parse(existing);
+      }
+    } catch (error) {
+      console.warn('[gateway] failed reading QA cache', error);
+    }
+
+    const meeting = await fetchMeetingMetadata({ meetingId, userId, authToken });
+    if (!meeting) {
+      return null;
+    }
+
+    const cachedSpeakers = normalizeSpeakerMap(existingParsed?.speakers);
+    const meetingSpeakers = normalizeSpeakerMap(meeting?.speakerMap);
+    const speakerMap = hasSpeakersOverride
+      ? normalizeSpeakerMap(speakersOverride)
+      : Object.keys(cachedSpeakers).length
+        ? cachedSpeakers
+        : Object.keys(meetingSpeakers).length
+          ? meetingSpeakers
+          : buildSpeakerMap(meeting.participants, meeting.lines);
+    const transcriptCount = getTranscriptSpeakerCount(meeting.lines);
+    const speakerCount = Math.min(
+      MEETING_QA_MAX_SPEAKERS,
+      Math.max(transcriptCount, Object.keys(speakerMap).length),
+    );
+    const cacheSpeakerMap = fillSpeakerMap(speakerMap, speakerCount);
+
+    const payload = {
+      speakers: cacheSpeakerMap,
+      duration: computeDurationMs({
+        startTime: meeting.startTime,
+        endTime: meeting.endTime,
+      }),
+    };
+    let shouldWrite = true;
+
+    try {
+      if (existingParsed) {
+        if (
+          typeof existingParsed?.duration === 'number' &&
+          areSpeakerMapsEqual(existingParsed?.speakers, payload.speakers) &&
+          existingParsed.duration === payload.duration
+        ) {
+          shouldWrite = false;
+        }
+      }
+    } catch (error) {
+      console.warn('[gateway] failed comparing QA cache', error);
+    }
+
+    if (shouldWrite) {
+      await meetingCacheClient.set(cacheKey, JSON.stringify(payload), {
+        EX: MEETING_QA_CACHE_TTL_SECONDS,
+      });
+      console.log('[gateway] QA meeting cache set', {
+        key: cacheKey,
+        ttlSeconds: MEETING_QA_CACHE_TTL_SECONDS,
+        payload,
+      });
+    } else {
+      await meetingCacheClient.expire(cacheKey, MEETING_QA_CACHE_TTL_SECONDS);
+      console.log('[gateway] QA meeting cache refresh', {
+        key: cacheKey,
+        ttlSeconds: MEETING_QA_CACHE_TTL_SECONDS,
+      });
+    }
+    try {
+      const keys = await meetingCacheClient.keys(`${MEETING_QA_CACHE_PREFIX}*`);
+      const allEntries = {};
+      for (const k of keys || []) {
+        try {
+          const raw = await meetingCacheClient.get(k);
+          try {
+            allEntries[k] = raw ? JSON.parse(raw) : null;
+          } catch (_p) {
+            allEntries[k] = raw;
+          }
+        } catch (e) {
+          allEntries[k] = null;
+        }
+      }
+      console.log('[gateway] QA meeting cache all entries', allEntries);
+    } catch (err) {
+      console.warn('[gateway] failed to enumerate QA cache entries', err);
+    }
+    return payload;
+  } catch (error) {
+    console.warn('[gateway] failed updating QA meeting cache', error);
+  }
+  return null;
 };
 
 app.get('/health', (_req, res) => {
@@ -651,9 +985,60 @@ app.get('/meetings/:meetingId', (req, res) =>
   proxyMeetingService('GET', `/meetings/${encodeURIComponent(req.params.meetingId)}`, req, res),
 );
 
-app.post('/meetings/:meetingId/messages', (req, res) =>
-  proxyMeetingService('POST', `/meetings/${encodeURIComponent(req.params.meetingId)}/messages`, req, res),
-);
+app.post('/meetings/:meetingId/messages', (req, res) => {
+  if (req.body?.mode === 'qa') {
+    const meetingId = Number(req.params.meetingId);
+    const userId = Number(req.authUser?.id);
+    if (Number.isFinite(meetingId) && meetingId > 0 && Number.isFinite(userId) && userId > 0) {
+      void updateMeetingQaCache({
+        meetingId,
+        userId,
+        authToken: req.authToken,
+      });
+    }
+  }
+
+  return proxyMeetingService(
+    'POST',
+    `/meetings/${encodeURIComponent(req.params.meetingId)}/messages`,
+    req,
+    res,
+  );
+});
+
+app.patch('/meetings/:meetingId/qa-cache', async (req, res) => {
+  const meetingId = Number(req.params.meetingId);
+  if (!Number.isFinite(meetingId) || meetingId <= 0) {
+    return res.status(400).json({ message: 'Invalid meeting id.' });
+  }
+
+  const userId = Number(req.authUser?.id);
+  if (!Number.isFinite(userId) || userId <= 0) {
+    return res.status(401).json({ message: 'Unauthorized.' });
+  }
+
+  const speakers = normalizeSpeakerMap(req.body?.speakers);
+  await persistMeetingSpeakers({
+    meetingId,
+    userId,
+    authToken: req.authToken,
+    speakers,
+  });
+
+  const payload = await updateMeetingQaCache({
+    meetingId,
+    userId,
+    authToken: req.authToken,
+    speakersOverride: speakers,
+    hasSpeakersOverride: true,
+  });
+
+  if (!payload) {
+    return res.status(404).json({ message: 'Meeting not found.' });
+  }
+
+  return res.json({ ok: true, payload });
+});
 
 app.patch('/meetings/:meetingId/transcript', (req, res) =>
   proxyMeetingService('PATCH', `/meetings/${encodeURIComponent(req.params.meetingId)}/transcript`, req, res),

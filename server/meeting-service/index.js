@@ -11,6 +11,7 @@ const PORT = requireNumberEnv('PORT');
 // Docker-for-Mac host bridge so containerised meeting-service can reach the
 // CHECKPOINT1 process the user runs in a host shell.
 const QA_SERVICE_URL = (process.env.QA_SERVICE_URL || 'http://ai-gateway:8000').replace(/\/+$/, '');
+const MAX_SPEAKER_COUNT = 4;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -81,6 +82,24 @@ const trimTranscriptContinuation = (previousText, nextText) => {
   }
 
   return next;
+};
+
+const normalizeSpeakerMap = (value = {}) => {
+  if (!value || typeof value !== 'object') {
+    return {};
+  }
+  const map = {};
+  for (let i = 1; i <= MAX_SPEAKER_COUNT; i += 1) {
+    const key = `speaker_${i}`;
+    if (!Object.prototype.hasOwnProperty.call(value, key)) {
+      continue;
+    }
+    const trimmed = String(value[key] || '').trim();
+    if (trimmed) {
+      map[key] = trimmed;
+    }
+  }
+  return map;
 };
 
 /**
@@ -212,11 +231,13 @@ app.post('/meetings', (req, res) => {
   const startedAt = new Date();
   const title = String(req.body?.title || '').trim() || `Meeting ${startedAt.toLocaleString()}`;
   const participants = Array.isArray(req.body?.participants) ? req.body.participants : [];
+  const speakerMap = normalizeSpeakerMap(req.body?.speakerMap);
 
   const transcript = {
     title,
     durationMinutes: 0,
     participants,
+    speakerMap,
     actionItems: [],
     messages: [],
     asrStatus: 'idle',
@@ -323,6 +344,7 @@ app.get('/meetings/dummy', (req, res) => {
       TO_CHAR(COALESCE(start_time, date), 'Mon DD, YYYY') AS date,
       COALESCE(summarisation, '') AS summary,
       COALESCE(full_transcript->'participants', '[]'::jsonb) AS participants,
+      COALESCE(full_transcript->'speakerMap', '{}'::jsonb) AS speaker_map,
       COALESCE(full_transcript->'messages', '[]'::jsonb) AS messages,
       COALESCE(full_transcript->'lines', '[]'::jsonb) AS lines,
       COALESCE(full_transcript->>'bufferTranscription', '') AS buffer_transcription,
@@ -344,6 +366,7 @@ app.get('/meetings/dummy', (req, res) => {
         date: row.date,
         summary: row.summary,
         participants: Array.isArray(row.participants) ? row.participants : [],
+        speakerMap: row.speaker_map && typeof row.speaker_map === 'object' ? row.speaker_map : {},
         messages: Array.isArray(row.messages) ? row.messages : [],
         lines: Array.isArray(row.lines) ? row.lines : [],
         bufferTranscription: String(row.buffer_transcription || ''),
@@ -377,6 +400,7 @@ app.get('/meetings/recent', (req, res) => {
       TO_CHAR(COALESCE(end_time, date), 'Mon DD, YYYY') AS date,
       COALESCE(summarisation, '') AS summary,
       COALESCE(full_transcript->'participants', '[]'::jsonb) AS participants,
+      COALESCE(full_transcript->'speakerMap', '{}'::jsonb) AS speaker_map,
       COALESCE(duration_minutes, 0) AS duration_minutes,
       start_time,
       end_time
@@ -393,6 +417,7 @@ app.get('/meetings/recent', (req, res) => {
         date: row.date,
         summary: row.summary,
         participants: Array.isArray(row.participants) ? row.participants : [],
+        speakerMap: row.speaker_map && typeof row.speaker_map === 'object' ? row.speaker_map : {},
         durationMinutes: Number(row.duration_minutes) || 0,
         startTime: row.start_time,
         endTime: row.end_time,
@@ -424,6 +449,7 @@ app.get('/meetings/:meetingId', (req, res) => {
       TO_CHAR(COALESCE(end_time, date), 'Mon DD, YYYY') AS date,
       COALESCE(summarisation, '') AS summary,
       COALESCE(full_transcript->'participants', '[]'::jsonb) AS participants,
+      COALESCE(full_transcript->'speakerMap', '{}'::jsonb) AS speaker_map,
       COALESCE(full_transcript->'messages', '[]'::jsonb) AS messages,
       COALESCE(full_transcript->'actionItems', '[]'::jsonb) AS action_items,
       COALESCE(full_transcript->'lines', '[]'::jsonb) AS lines,
@@ -451,6 +477,7 @@ app.get('/meetings/:meetingId', (req, res) => {
         date: row.date,
         summary: row.summary,
         participants: Array.isArray(row.participants) ? row.participants : [],
+        speakerMap: row.speaker_map && typeof row.speaker_map === 'object' ? row.speaker_map : {},
         messages: Array.isArray(row.messages) ? row.messages : [],
         actionItems: Array.isArray(row.action_items) ? row.action_items : [],
         lines: Array.isArray(row.lines) ? row.lines : [],
@@ -844,6 +871,44 @@ app.patch('/meetings/:meetingId/transcript', (req, res) => {
     .catch((error) => {
       console.error('[meeting-service] failed to persist transcript state', error);
       return res.status(500).json({ message: 'Failed to save transcript.' });
+    });
+});
+
+app.patch('/meetings/:meetingId/speakers', (req, res) => {
+  const userId = requireUserId(req, res);
+  if (!userId) {
+    return;
+  }
+
+  const meetingId = Number(req.params.meetingId);
+  if (!Number.isFinite(meetingId) || meetingId <= 0) {
+    return res.status(400).json({ message: 'Invalid meeting id.' });
+  }
+
+  const speakerMap = normalizeSpeakerMap(req.body?.speakers);
+
+  return query(
+    `UPDATE meetings
+     SET full_transcript = jsonb_set(
+       COALESCE(full_transcript, '{}'::jsonb),
+       '{speakerMap}',
+       $1::jsonb,
+       true
+     )
+     WHERE id = $2 AND user_id = $3
+     RETURNING full_transcript->'speakerMap' AS speaker_map`,
+    [JSON.stringify(speakerMap), meetingId, userId],
+  )
+    .then((result) => {
+      const row = result.rows[0];
+      if (!row) {
+        return res.status(404).json({ message: 'Meeting not found.' });
+      }
+      return res.json({ ok: true, speakerMap: row.speaker_map || {} });
+    })
+    .catch((error) => {
+      console.error('[meeting-service] failed to save speaker map', error);
+      return res.status(500).json({ message: 'Failed to save speakers.' });
     });
 });
 

@@ -141,6 +141,7 @@ const buildCalendarMeeting = (event, index) => {
     date: startDate ? startDate.toISOString() : startValue || '',
     summary: description || location || 'Google Calendar event',
     participants,
+    speakerMap: {},
     messages: [],
     actionItems: [],
     lines: [],
@@ -160,6 +161,74 @@ const buildCalendarMeeting = (event, index) => {
 
 const getMeetingSortDate = (meeting) =>
   parseCalendarDate(meeting?.startTime || meeting?.date || meeting?.updatedAt || '');
+
+const MAX_SPEAKER_COUNT = 4;
+const SPEAKER_BADGE_COLORS = ['#2f9e44', '#e03131', '#1c7ed6', '#f08c00'];
+
+const getTranscriptSpeakerCount = (lines = []) => {
+  if (!Array.isArray(lines)) {
+    return 0;
+  }
+  const seen = new Set();
+  lines.forEach((line) => {
+    const raw = line?.speaker;
+    if (raw == null) {
+      return;
+    }
+    const numeric = Number(raw);
+    if (Number.isFinite(numeric) && numeric < 0) {
+      return;
+    }
+    const key = String(raw).trim();
+    if (!key) {
+      return;
+    }
+    seen.add(key);
+  });
+  return seen.size;
+};
+
+const buildSpeakerPayload = (names = []) => {
+  const payload = {};
+  names.slice(0, MAX_SPEAKER_COUNT).forEach((name, index) => {
+    const trimmed = String(name || '').trim();
+    if (trimmed) {
+      payload[`speaker_${index + 1}`] = trimmed;
+    }
+  });
+  return payload;
+};
+
+const deriveSpeakerBaseList = (meeting) => {
+  const speakerMap = meeting?.speakerMap && typeof meeting.speakerMap === 'object'
+    ? meeting.speakerMap
+    : null;
+
+  if (speakerMap) {
+    const fromMap = Array.from({ length: MAX_SPEAKER_COUNT }, (_, index) => {
+      const key = `speaker_${index + 1}`;
+      return String(speakerMap[key] || '').trim();
+    }).filter(Boolean);
+    if (fromMap.length) {
+      return fromMap;
+    }
+  }
+
+  const participants = Array.isArray(meeting?.participants) ? meeting.participants : [];
+  return participants
+    .map((name) => String(name || '').trim())
+    .filter(Boolean)
+    .slice(0, MAX_SPEAKER_COUNT);
+};
+
+const buildSpeakerDrafts = (baseList, count) => {
+  const safeCount = Math.min(Math.max(0, count), MAX_SPEAKER_COUNT);
+  const drafts = [...baseList].slice(0, safeCount);
+  while (drafts.length < safeCount) {
+    drafts.push('');
+  }
+  return drafts;
+};
 
 
 export default function PreviousMeetings() {
@@ -188,6 +257,13 @@ export default function PreviousMeetings() {
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
   const [isTranscriptPanelOpen, setIsTranscriptPanelOpen] = useState(true);
+  const [isEditingSpeakers, setIsEditingSpeakers] = useState(false);
+  const [speakerDrafts, setSpeakerDrafts] = useState(Array(MAX_SPEAKER_COUNT).fill(''));
+  const [isSavingSpeakers, setIsSavingSpeakers] = useState(false);
+  const [speakerSaveError, setSpeakerSaveError] = useState('');
+  const speakerDraftsByMeetingRef = useRef(new Map());
+  const [speakerSlotCount, setSpeakerSlotCount] = useState(0);
+  const speakerSlotCountByMeetingRef = useRef(new Map());
   const actionsMenuRef = useRef(null);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -407,6 +483,7 @@ export default function PreviousMeetings() {
       date: meeting.date,
       summary: meeting.summary,
       participants: Array.isArray(meeting.participants) ? meeting.participants : [],
+      speakerMap: meeting.speakerMap && typeof meeting.speakerMap === 'object' ? meeting.speakerMap : {},
       messages: Array.isArray(meeting.messages) ? meeting.messages : [],
       actionItems: Array.isArray(meeting.actionItems) ? meeting.actionItems : [],
       lines: Array.isArray(meeting.lines) ? meeting.lines : [],
@@ -426,6 +503,7 @@ export default function PreviousMeetings() {
       date: routeMeeting.date,
       summary: routeMeeting.summary,
       participants: Array.isArray(routeMeeting.participants) ? routeMeeting.participants : [],
+      speakerMap: routeMeeting.speakerMap && typeof routeMeeting.speakerMap === 'object' ? routeMeeting.speakerMap : {},
       messages: Array.isArray(routeMeeting.messages) ? routeMeeting.messages : [],
       actionItems: Array.isArray(routeMeeting.actionItems) ? routeMeeting.actionItems : [],
       lines: Array.isArray(routeMeeting.lines) ? routeMeeting.lines : [],
@@ -436,7 +514,12 @@ export default function PreviousMeetings() {
     };
 
     const hasRouteMeeting = baseMeetings.some((meeting) => String(meeting.id) === String(routeNormalized.id));
-    return hasRouteMeeting ? baseMeetings : [routeNormalized, ...baseMeetings];
+    if (hasRouteMeeting) {
+      return baseMeetings.map((meeting) =>
+        String(meeting.id) === String(routeNormalized.id) ? routeNormalized : meeting,
+      );
+    }
+    return [routeNormalized, ...baseMeetings];
   }, [meetings, routeMeeting]);
 
 
@@ -525,6 +608,40 @@ export default function PreviousMeetings() {
   );
 
   const isCalendarEventSelected = Boolean(selectedMeeting?.isCalendarEvent);
+
+  useEffect(() => {
+    if (!selectedMeeting || selectedMeeting.isCalendarEvent) {
+      setSpeakerDrafts(Array(MAX_SPEAKER_COUNT).fill(''));
+      setSpeakerSlotCount(0);
+      setIsEditingSpeakers(false);
+      setSpeakerSaveError('');
+      return;
+    }
+
+    const meetingKey = String(selectedMeeting.id);
+    const draftStore = speakerDraftsByMeetingRef.current;
+    const slotStore = speakerSlotCountByMeetingRef.current;
+    const storedDrafts = draftStore.get(meetingKey);
+    const storedCount = slotStore.get(meetingKey);
+    const transcriptCount = getTranscriptSpeakerCount(selectedMeeting.lines);
+    const baseList = deriveSpeakerBaseList(selectedMeeting);
+    const baseCount = baseList.length;
+    const nextCount = Math.min(
+      MAX_SPEAKER_COUNT,
+      Math.max(transcriptCount, baseCount, storedCount || 0),
+    );
+
+    const drafts = storedDrafts
+      ? buildSpeakerDrafts(storedDrafts, nextCount)
+      : buildSpeakerDrafts(baseList, nextCount);
+
+    draftStore.set(meetingKey, drafts);
+    slotStore.set(meetingKey, nextCount);
+    setSpeakerDrafts([...drafts]);
+    setSpeakerSlotCount(nextCount);
+    setIsEditingSpeakers(false);
+    setSpeakerSaveError('');
+  }, [selectedMeeting]);
 
   const calendarTimeRange = useMemo(() => {
     if (!selectedMeeting || !selectedMeeting.isCalendarEvent) {
@@ -988,6 +1105,63 @@ const appendMessageToCache = useCallback(
     }
   }, [isRenaming, queryClient, renameMeetingInCache, selectedMeeting, titleDraft]);
 
+  const handleSaveSpeakers = useCallback(async () => {
+    if (!selectedMeeting || selectedMeeting.isCalendarEvent || isSavingSpeakers) {
+      return;
+    }
+
+    setSpeakerSaveError('');
+    setIsSavingSpeakers(true);
+    const normalizedDrafts = speakerDrafts.map((name) => String(name || '').trim());
+    const speakersPayload = buildSpeakerPayload(normalizedDrafts);
+
+    try {
+      const response = await fetchWithAuth(`/meetings/${selectedMeeting.id}/qa-cache`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ speakers: speakersPayload }),
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload?.message || 'Failed to save speakers.');
+      }
+
+      const speakerMapValue = speakersPayload;
+      queryClient.setQueriesData({ queryKey: ['meetings', 'dummy'] }, (current) => {
+        const currentMeetings = Array.isArray(current) ? current : [];
+        return currentMeetings.map((meeting) => {
+          if (String(meeting.id) !== String(selectedMeeting.id)) {
+            return meeting;
+          }
+          return { ...meeting, speakerMap: speakerMapValue };
+        });
+      });
+
+      if (meetingid && String(meetingid) === String(selectedMeeting.id)) {
+        queryClient.setQueryData(['meeting', meetingid], (current) => {
+          if (!current || String(current.id) !== String(selectedMeeting.id)) {
+            return current;
+          }
+          return { ...current, speakerMap: speakerMapValue };
+        });
+      }
+
+      const meetingKey = String(selectedMeeting.id);
+      const slotCount = speakerSlotCount || normalizedDrafts.length;
+      const normalizedList = buildSpeakerDrafts(normalizedDrafts, slotCount);
+      speakerDraftsByMeetingRef.current.set(meetingKey, normalizedList);
+      speakerSlotCountByMeetingRef.current.set(meetingKey, slotCount);
+      setSpeakerDrafts(normalizedList);
+      setSpeakerSlotCount(slotCount);
+      setIsEditingSpeakers(false);
+    } catch (error) {
+      setSpeakerSaveError(error?.message || 'Failed to save speakers.');
+    } finally {
+      setIsSavingSpeakers(false);
+    }
+  }, [isSavingSpeakers, meetingid, queryClient, selectedMeeting, speakerDrafts, speakerSlotCount]);
+
   const handleConnectCalendar = () => {
     
     const connectBase = API_URL || '';
@@ -1212,6 +1386,124 @@ const appendMessageToCache = useCallback(
                   ))}
                 </div>
                 <div className="meeting-header-actions-row">
+                  {!isCalendarEventSelected && (
+                    <div
+                      className="meeting-speaker-badges"
+                      style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}
+                    >
+                      {speakerDrafts.map((name, index) => {
+                        const color = SPEAKER_BADGE_COLORS[index] || '#888';
+                        const label = name || `Speaker ${index + 1}`;
+                        if (isEditingSpeakers) {
+                          return (
+                            <input
+                              key={`speaker-input-${index}`}
+                              type="text"
+                              value={name}
+                              placeholder={`Speaker ${index + 1}`}
+                              onChange={(event) => {
+                                const next = [...speakerDrafts];
+                                next[index] = event.target.value;
+                                setSpeakerDrafts(next);
+                                const meetingKey = String(selectedMeeting.id);
+                                speakerDraftsByMeetingRef.current.set(meetingKey, next);
+                              }}
+                              style={{
+                                border: `1px solid ${color}`,
+                                borderRadius: '999px',
+                                padding: '4px 10px',
+                                fontSize: '0.75rem',
+                                minWidth: '100px',
+                              }}
+                              aria-label={`Speaker ${index + 1}`}
+                            />
+                          );
+                        }
+
+                        return (
+                          <span
+                            key={`speaker-badge-${index}`}
+                            style={{
+                              backgroundColor: color,
+                              color: '#fff',
+                              borderRadius: '999px',
+                              padding: '4px 10px',
+                              fontSize: '0.75rem',
+                              opacity: name ? 1 : 0.6,
+                            }}
+                          >
+                            {label}
+                          </span>
+                        );
+                      })}
+                      {isEditingSpeakers ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={handleSaveSpeakers}
+                            disabled={isSavingSpeakers}
+                          >
+                            {isSavingSpeakers ? 'Saving...' : 'Save'}
+                          </button>
+                          {speakerSlotCount < MAX_SPEAKER_COUNT && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const nextCount = Math.min(MAX_SPEAKER_COUNT, speakerSlotCount + 1);
+                                const nextDrafts = buildSpeakerDrafts(speakerDrafts, nextCount);
+                                const meetingKey = String(selectedMeeting.id);
+                                speakerDraftsByMeetingRef.current.set(meetingKey, nextDrafts);
+                                speakerSlotCountByMeetingRef.current.set(meetingKey, nextCount);
+                                setSpeakerSlotCount(nextCount);
+                                setSpeakerDrafts(nextDrafts);
+                              }}
+                              disabled={isSavingSpeakers}
+                            >
+                              Add speaker
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setIsEditingSpeakers(false);
+                              const meetingKey = String(selectedMeeting.id);
+                              const stored = speakerDraftsByMeetingRef.current.get(meetingKey);
+                              const storedCount = speakerSlotCountByMeetingRef.current.get(meetingKey);
+                              if (typeof storedCount === 'number') {
+                                setSpeakerSlotCount(storedCount);
+                              }
+                              if (stored) {
+                                setSpeakerDrafts([...stored]);
+                              } else {
+                                const transcriptCount = getTranscriptSpeakerCount(selectedMeeting.lines);
+                                const baseList = deriveSpeakerBaseList(selectedMeeting);
+                                const nextCount = Math.min(
+                                  MAX_SPEAKER_COUNT,
+                                  Math.max(transcriptCount, baseList.length),
+                                );
+                                const derived = buildSpeakerDrafts(baseList, nextCount);
+                                speakerDraftsByMeetingRef.current.set(meetingKey, derived);
+                                speakerSlotCountByMeetingRef.current.set(meetingKey, nextCount);
+                                setSpeakerSlotCount(nextCount);
+                                setSpeakerDrafts(derived);
+                              }
+                              setSpeakerSaveError('');
+                            }}
+                            disabled={isSavingSpeakers}
+                          >
+                            Cancel
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setIsEditingSpeakers(true)}
+                        >
+                          Edit speakers
+                        </button>
+                      )}
+                    </div>
+                  )}
                   {isCalendarEventSelected && selectedMeeting.meetLink && (
                     <button
                       type="button"
@@ -1274,6 +1566,7 @@ const appendMessageToCache = useCallback(
               </div>
             </header>
             {renameError && <p className="recap-summary">{renameError}</p>}
+            {speakerSaveError && <p className="recap-summary">{speakerSaveError}</p>}
             {deleteError && <p className="recap-summary">{deleteError}</p>}
 
             <div className="meeting-detail-summary">
