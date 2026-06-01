@@ -19,7 +19,7 @@ Three roles:
 """
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -46,6 +46,7 @@ class ExtractedQuestion(BaseModel):
 
     speakers: List[str] = Field(default_factory=list)
     time_ranges: List[TimeRange] = Field(default_factory=list)
+    metadata_only: bool = False
 
 
 class RetrievedChunk(BaseModel):
@@ -75,3 +76,5 @@ class QARequest(BaseModel):
     meeting_id: int
     user_id: int
     question: str
+    current_duration: Optional[float] = None
+    speaker_map: Optional[Dict[str, str]] = None

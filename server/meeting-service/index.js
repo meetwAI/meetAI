@@ -664,6 +664,8 @@ const handleQaMessage = async ({ req, res, meetingId, userId, question }) => {
         meeting_id: meetingId,
         user_id: userId,
         question,
+        speaker_map: req.body?.speaker_map,
+        current_duration: req.body?.current_duration,
       }),
       signal: abortController.signal,
     });

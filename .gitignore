@@ -1,11 +1,10 @@
-.env*
-CHECKPOINT1/
+.env
+*CHECKPOINT1/
+.antigravitycli/
 docker-compose.mac.yml
 .vscode/settings.json
-
 # macOS system files
 .DS_Store
-
 # Python cache files
 __pycache__/
 *.py[cod]

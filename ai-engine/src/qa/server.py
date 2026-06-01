@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import AsyncIterator
 
 from fastapi import FastAPI, HTTPException
@@ -61,7 +62,6 @@ from src.qa.retriever import QARetriever
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="meetAI QA service", version="1.0")
-
 
 # Module-level singletons populated by the startup hook. We avoid passing
 # them through ``request.app.state`` so the type checker can see them and
@@ -123,6 +123,7 @@ def _meta_payload(
     chunks: list[RetrievedChunk],
     hints_speakers: list[str],
     hints_time_ranges: list,
+    metadata_only: bool,
 ) -> dict:
     return {
         "chunks": [
@@ -142,8 +143,90 @@ def _meta_payload(
             "time_ranges": [
                 {"start": tr.start, "end": tr.end} for tr in hints_time_ranges
             ],
+            "metadata_only": metadata_only,
         },
     }
+
+
+def _normalise_speaker_map(raw: dict[str, str] | None) -> dict[str, str]:
+    """Return non-empty speaker label -> display name mappings."""
+    out: dict[str, str] = {}
+    for label, display in (raw or {}).items():
+        label_text = str(label or "").strip()
+        display_text = str(display or "").strip()
+        if label_text and display_text:
+            out[label_text] = display_text
+    return out
+
+
+def _reverse_map_hint_speakers(
+    speakers: list[str], speaker_map: dict[str, str]
+) -> list[str]:
+    """
+    Convert display names from the extractor back to stored diarization labels.
+
+    If a hint is already a stored label, keep it. Unknown names also pass
+    through so old clients without speaker maps behave as before.
+    """
+    if not speaker_map:
+        return speakers
+
+    display_to_label = {
+        display.strip().lower(): label
+        for label, display in speaker_map.items()
+        if display.strip()
+    }
+    label_lookup = {label.strip().lower(): label for label in speaker_map}
+
+    mapped: list[str] = []
+    seen: set[str] = set()
+    for speaker in speakers:
+        key = str(speaker or "").strip().lower()
+        if not key:
+            continue
+        value = display_to_label.get(key) or label_lookup.get(key) or speaker
+        if value not in seen:
+            mapped.append(value)
+            seen.add(value)
+    return mapped
+
+
+def _display_map_chunks(
+    chunks: list[RetrievedChunk], speaker_map: dict[str, str]
+) -> list[RetrievedChunk]:
+    """Replace stored speaker labels with display names in retrieved context."""
+    if not speaker_map:
+        return chunks
+
+    labels = sorted(speaker_map, key=len, reverse=True)
+    if not labels:
+        return chunks
+
+    pattern = re.compile(
+        r"(?<![A-Za-z0-9_])("
+        + "|".join(re.escape(label) for label in labels)
+        + r")(?![A-Za-z0-9_])"
+    )
+    label_lookup = {label.lower(): display for label, display in speaker_map.items()}
+
+    def replace_label(match: re.Match[str]) -> str:
+        return speaker_map.get(match.group(1), match.group(1))
+
+    mapped_chunks: list[RetrievedChunk] = []
+    for chunk in chunks:
+        mapped_speakers = [
+            label_lookup.get(str(speaker).lower(), speaker)
+            for speaker in chunk.speakers
+        ]
+        mapped_chunks.append(
+            chunk.model_copy(
+                update={
+                    "text": pattern.sub(replace_label, chunk.text),
+                    "speakers": mapped_speakers,
+                }
+            )
+        )
+    return mapped_chunks
 
 
 async def _stream_answer(req: QARequest) -> AsyncIterator[str]:
@@ -165,15 +248,26 @@ async def _stream_answer(req: QARequest) -> AsyncIterator[str]:
     assert _extractor is not None and _retriever is not None and _streamer is not None
 
     # 1) Hints — never raises; on Gemini failure returns empty lists.
-    hints = await _extractor.extract(req.question)
+    speaker_map = _normalise_speaker_map(req.speaker_map)
+    hints = await _extractor.extract(
+        req.question,
+        current_duration=req.current_duration,
+    )
+    retrieval_hints = hints.model_copy(
+        update={
+            "speakers": _reverse_map_hint_speakers(hints.speakers, speaker_map)
+        }
+    )
 
     # 2) Retrieve — raises on DB error. Catch and turn into SSE error event.
     try:
         chunks = await _retriever.retrieve(
             meeting_id=req.meeting_id,
             question=req.question,
-            hints=hints,
+            hints=retrieval_hints,
+            current_duration=req.current_duration,
         )
+        chunks = _display_map_chunks(chunks, speaker_map)
     except Exception as exc:
         logger.exception(
             "QA retrieve failed: meeting_id=%s user_id=%s",
@@ -186,7 +280,7 @@ async def _stream_answer(req: QARequest) -> AsyncIterator[str]:
     # 3) Emit meta before any delta so the UI can render the citations panel.
     yield _sse_event(
         "meta",
-        _meta_payload(chunks, hints.speakers, hints.time_ranges),
+        _meta_payload(chunks, hints.speakers, hints.time_ranges, hints.metadata_only),
     )
 
     # 4) Stream the answer. Concatenate as we go so we can emit the canonical

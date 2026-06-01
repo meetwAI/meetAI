@@ -143,7 +143,13 @@ class AnswerStreamer:
             f"USER QUESTION:\n{text}\n\n"
             f"TRANSCRIPT CHUNKS:\n{_format_chunks(chunks)}\n"
         )
+        async for item in self._stream_prompt(prompt):
+            yield item
 
+    async def _stream_prompt(
+        self,
+        prompt: str,
+    ) -> AsyncIterator[str | StreamError]:
         # Open the streaming call in a worker thread; google-genai's stream
         # iterator is synchronous. We then pull from it one chunk at a time,
         # also in a worker thread, so the event loop never blocks.

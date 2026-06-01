@@ -985,16 +985,22 @@ app.get('/meetings/:meetingId', (req, res) =>
   proxyMeetingService('GET', `/meetings/${encodeURIComponent(req.params.meetingId)}`, req, res),
 );
 
-app.post('/meetings/:meetingId/messages', (req, res) => {
+app.post('/meetings/:meetingId/messages', async (req, res) => {
   if (req.body?.mode === 'qa') {
     const meetingId = Number(req.params.meetingId);
     const userId = Number(req.authUser?.id);
     if (Number.isFinite(meetingId) && meetingId > 0 && Number.isFinite(userId) && userId > 0) {
-      void updateMeetingQaCache({
+      const payload = await updateMeetingQaCache({
         meetingId,
         userId,
         authToken: req.authToken,
       });
+      if (payload) {
+        req.body.speaker_map = payload.speakers;
+        if (typeof payload.duration === 'number') {
+          req.body.current_duration = payload.duration / 1000;
+        }
+      }
     }
   }
 

@@ -50,7 +50,9 @@ import logging
 from typing import List, Optional, Sequence
 
 import asyncpg
+import asyncio
 
+from src.core.config import settings
 from src.embedder.embeddings import EMBED_DIM, embed_texts_async
 from src.qa.models import ExtractedQuestion, RetrievedChunk, TimeRange
 
@@ -66,6 +68,8 @@ logger = logging.getLogger(__name__)
 #     low-relevance tail chunks.
 DEFAULT_TOPIC_LIMIT = 1
 DEFAULT_CHUNK_LIMIT = 4
+DEFAULT_CHUNK_WEIGHT = 0.7
+DEFAULT_TOPIC_WEIGHT = 0.3
 
 
 def _encode_vector(values: Sequence[float]) -> str:
@@ -135,7 +139,7 @@ top_topics AS (
         t.topic_id,
         t.topic,
         t.chunk_ids,
-        t.embedding AS topic_emb,
+        -- We only need the scalar similarity score now, not the vector!
         1 - (t.embedding <=> q.qv) AS topic_sim
     FROM meeting_topics t, q
     WHERE t.meeting_id = $2
@@ -145,23 +149,36 @@ top_topics AS (
     ORDER BY t.embedding <=> q.qv
     LIMIT $3
 ),
-candidate_chunks AS (
+topic_candidates AS (
     SELECT
         c.chunk_id,
         c.text,
         c.speakers,
         c.start_time,
         c.end_time,
-        c.embedding AS chunk_emb,
         t.topic_id,
         t.topic,
-        t.topic_emb
+        -- Score-level fusion: (Chunk Weight * Chunk Sim) + (Topic Weight * Topic Sim)
+        ($5::float * (1 - (c.embedding <=> (SELECT qv FROM q)))) + ($6::float * t.topic_sim) AS fused_score
     FROM top_topics t
     JOIN meeting_chunks c ON c.chunk_id = ANY(t.chunk_ids)
     WHERE c.meeting_id = $2
       AND c.embedding IS NOT NULL
       {speaker_clause}
       {time_clause}
+),
+{recent_candidates_cte}
+ranked_candidates AS (
+    SELECT
+        *,
+        ROW_NUMBER() OVER (
+            PARTITION BY chunk_id
+            ORDER BY fused_score DESC, topic_id NULLS LAST
+        ) AS rn
+    FROM (
+        SELECT * FROM topic_candidates
+        {recent_candidates_union}
+    ) candidates
 )
 SELECT
     chunk_id,
@@ -171,41 +188,51 @@ SELECT
     end_time,
     topic_id,
     topic,
-    1 - ((chunk_emb + topic_emb) <=> (SELECT qv FROM q)) AS fused_score
-FROM candidate_chunks
+    fused_score
+FROM ranked_candidates
+WHERE rn = 1
 ORDER BY fused_score DESC
 LIMIT {chunk_limit_placeholder};
 """
 
-_FALLBACK_SQL_TEMPLATE = """
-WITH q AS (
-    SELECT $1::vector AS qv
-),
-candidate_chunks AS (
+# Injected into _BASE_SQL_TEMPLATE only when there is no time-range filter.
+# When the user scoped their question to a specific window we trust the topic
+# search to cover it; when they asked an open question we always pull the last
+# TOPIC_WINDOW_SECONDS of chunks too so very recent speech (not yet
+# topic-indexed) is never invisible to the retriever.
+_RECENT_CANDIDATES_CTE_TEMPLATE = """recent_candidates AS (
     SELECT
         c.chunk_id,
         c.text,
         c.speakers,
         c.start_time,
         c.end_time,
-        c.embedding AS chunk_emb
+        NULL::bigint AS topic_id,
+        NULL::text   AS topic,
+        1 - (c.embedding <=> (SELECT qv FROM q)) AS fused_score
     FROM meeting_chunks c
     WHERE c.meeting_id = $2
       AND c.embedding IS NOT NULL
+      AND c.end_time::float >= GREATEST($7::float - $4::float, 0.0)
       {speaker_clause}
       {time_clause}
-)
+),"""
+
+_METADATA_SQL_TEMPLATE = """
 SELECT
-    chunk_id,
-    text,
-    speakers,
-    start_time,
-    end_time,
+    c.chunk_id,
+    c.text,
+    c.speakers,
+    c.start_time,
+    c.end_time,
     NULL::bigint AS topic_id,
     NULL::text AS topic,
-    1 - (chunk_emb <=> (SELECT qv FROM q)) AS fused_score
-FROM candidate_chunks
-ORDER BY fused_score DESC
+    1.0::float AS fused_score
+FROM meeting_chunks c
+WHERE c.meeting_id = $1
+  {speaker_clause}
+  {time_clause}
+ORDER BY c.start_time ASC NULLS LAST, c.chunk_id ASC
 LIMIT {chunk_limit_placeholder};
 """
 
@@ -222,16 +249,23 @@ class QARetriever:
         db_pool: asyncpg.Pool,
         topic_limit: int = DEFAULT_TOPIC_LIMIT,
         chunk_limit: int = DEFAULT_CHUNK_LIMIT,
+        recent_window_seconds: float = settings.TOPIC_WINDOW_SECONDS,
+        chunk_weight: float = DEFAULT_CHUNK_WEIGHT,
+        topic_weight: float = DEFAULT_TOPIC_WEIGHT,
     ) -> None:
         self._pool = db_pool
         self._topic_limit = int(topic_limit)
         self._chunk_limit = int(chunk_limit)
+        self._recent_window_seconds = float(recent_window_seconds)
+        self._chunk_weight = float(chunk_weight)
+        self._topic_weight = float(topic_weight)
 
     async def retrieve(
         self,
         meeting_id: int,
         question: str,
         hints: Optional[ExtractedQuestion] = None,
+        current_duration: Optional[float] = None,
     ) -> List[RetrievedChunk]:
         """
         Return the top-K chunks for ``question`` in ``meeting_id``, ordered
@@ -242,9 +276,22 @@ class QARetriever:
         if not text:
             return []
 
+        hints = hints or ExtractedQuestion()
+        speakers = _normalise_speakers(hints.speakers)
+        if hints.metadata_only:
+            return await self._retrieve_metadata_only(
+                meeting_id, hints, speakers, chunk_limit=self._chunk_limit
+            )
+
         # 1) Embed the question. One element batch — local mode runs inline,
         #    service mode does one HTTP round-trip.
-        vectors = await embed_texts_async([text])
+
+        try:
+            async with asyncio.timeout(10.0):  # 10-second hard ceiling for embedder service
+                vectors = await embed_texts_async([text])
+        except TimeoutError:
+            logger.error("QA pipeline failed: Embedding microservice timed out.")
+            raise RuntimeError("Embedding service unavailable")
         if not vectors or len(vectors[0]) != EMBED_DIM:
             raise RuntimeError(
                 f"Question embedding had unexpected shape: "
@@ -252,13 +299,21 @@ class QARetriever:
             )
         q_vector = _encode_vector(vectors[0])
 
-        hints = hints or ExtractedQuestion()
-        speakers = _normalise_speakers(hints.speakers)
-
         # 2) Splice in the optional clauses. We hold our parameter indices
         #    explicitly so the time-range builder doesn't have to guess.
-        params: list = [q_vector, int(meeting_id), self._topic_limit]
-        next_idx = 4  # next available $N
+        #    Fixed params:
+        #      $1 q_vector  $2 meeting_id  $3 topic_limit  $4 recent_window_seconds
+        #      $5 chunk_weight  $6 topic_weight  $7 current_duration
+        params: list = [
+            q_vector,
+            int(meeting_id),
+            self._topic_limit,
+            self._recent_window_seconds,
+            self._chunk_weight,
+            self._topic_weight,
+            float(current_duration) if current_duration is not None else 0.0,
+        ]
+        next_idx = 8  # next available $N
 
         speaker_clause = ""
         if speakers:
@@ -281,24 +336,27 @@ class QARetriever:
         chunk_limit_idx = next_idx
         params.append(self._chunk_limit)
 
+        # Recent chunks are always included — they capture content that hasn't
+        # been topic-indexed yet (e.g. the last few minutes of a live meeting).
+        # When a time filter is present we apply it here too, so we only pull
+        # recent chunks that actually fall inside the requested window.
+        recent_candidates_cte = _RECENT_CANDIDATES_CTE_TEMPLATE.format(
+            speaker_clause=speaker_clause,
+            time_clause=time_clause,
+        )
+        recent_candidates_union = "UNION ALL\n        SELECT * FROM recent_candidates"
+
         sql = _BASE_SQL_TEMPLATE.format(
             speaker_clause=speaker_clause,
             time_clause=time_clause,
-            chunk_limit_placeholder=f"${chunk_limit_idx}",
-        )
-        
-        fallback_sql = _FALLBACK_SQL_TEMPLATE.format(
-            speaker_clause=speaker_clause,
-            time_clause=time_clause,
+            recent_candidates_cte=recent_candidates_cte,
+            recent_candidates_union=recent_candidates_union,
             chunk_limit_placeholder=f"${chunk_limit_idx}",
         )
 
         try:
             async with self._pool.acquire() as conn:
                 rows = await conn.fetch(sql, *params)
-                if not rows:
-                    logger.info("No chunks found using topic fusion. Falling back to simple chunk retrieval for meeting_id=%s", meeting_id)
-                    rows = await conn.fetch(fallback_sql, *params)
         except Exception:
             logger.exception(
                 "QARetriever: SQL failed for meeting_id=%s (speakers=%s, "
@@ -309,26 +367,89 @@ class QARetriever:
             )
             raise
 
-        results: List[RetrievedChunk] = []
-        for r in rows:
-            results.append(
-                RetrievedChunk(
-                    chunk_id=int(r["chunk_id"]),
-                    text=str(r["text"]),
-                    speakers=list(r["speakers"] or []),
-                    start_time=(
-                        float(r["start_time"]) if r["start_time"] is not None else None
-                    ),
-                    end_time=(
-                        float(r["end_time"]) if r["end_time"] is not None else None
-                    ),
-                    topic_id=(
-                        int(r["topic_id"]) if r["topic_id"] is not None else None
-                    ),
-                    topic=(
-                        str(r["topic"]) if r["topic"] is not None else None
-                    ),
-                    fused_score=float(r["fused_score"]),
-                )
+        return _rows_to_chunks(rows)
+
+    async def _retrieve_metadata_only(
+        self,
+        meeting_id: int,
+        hints: ExtractedQuestion,
+        speakers: Sequence[str],
+        *,
+        chunk_limit: int,
+    ) -> List[RetrievedChunk]:
+        """
+        Return chronological chunks using only metadata filters.
+
+        This deliberately avoids embedding pure recency/speaker questions;
+        there is no semantic signal to gain from phrases like "last 5 minutes".
+        """
+        params: list = [int(meeting_id)]
+        next_idx = 2
+
+        speaker_clause = ""
+        if speakers:
+            speaker_clause = (
+                f"AND EXISTS ("
+                f"  SELECT 1 FROM unnest(c.speakers) s "
+                f"  WHERE LOWER(s) = ANY(${next_idx}::text[])"
+                f")"
             )
-        return results
+            params.append(list(speakers))
+            next_idx += 1
+
+        time_clause, time_params = _build_time_clause(hints.time_ranges, next_idx)
+        if time_clause:
+            time_clause = f"AND {time_clause}"
+            params.extend(time_params)
+            next_idx += len(time_params)
+
+        chunk_limit_idx = next_idx
+        params.append(int(chunk_limit))
+
+        sql = _METADATA_SQL_TEMPLATE.format(
+            speaker_clause=speaker_clause,
+            time_clause=time_clause,
+            chunk_limit_placeholder=f"${chunk_limit_idx}",
+        )
+
+        try:
+            async with self._pool.acquire() as conn:
+                rows = await conn.fetch(sql, *params)
+        except Exception:
+            logger.exception(
+                "QARetriever: metadata SQL failed for meeting_id=%s "
+                "(speakers=%s, time_ranges=%d)",
+                meeting_id,
+                list(speakers),
+                len(hints.time_ranges),
+            )
+            raise
+
+        return _rows_to_chunks(rows)
+
+
+def _rows_to_chunks(rows) -> List[RetrievedChunk]:
+    """Map asyncpg rows from any QA retrieval path into RetrievedChunk."""
+    results: List[RetrievedChunk] = []
+    for r in rows:
+        results.append(
+            RetrievedChunk(
+                chunk_id=int(r["chunk_id"]),
+                text=str(r["text"]),
+                speakers=list(r["speakers"] or []),
+                start_time=(
+                    float(r["start_time"]) if r["start_time"] is not None else None
+                ),
+                end_time=(
+                    float(r["end_time"]) if r["end_time"] is not None else None
+                ),
+                topic_id=(
+                    int(r["topic_id"]) if r["topic_id"] is not None else None
+                ),
+                topic=(
+                    str(r["topic"]) if r["topic"] is not None else None
+                ),
+                fused_score=float(r["fused_score"]),
+            )
+        )
+    return results

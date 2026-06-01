@@ -42,7 +42,7 @@ You analyse a single user question about a recorded meeting and extract any
 RETRIEVAL HINTS that will help find the right transcript chunks. You do NOT
 answer the question. You ONLY return the structured hints.
 
-Two kinds of hints, both optional:
+Three kinds of hints, all optional:
 
 1. speakers
    - List of speaker names or labels referenced by the question.
@@ -67,9 +67,28 @@ Two kinds of hints, both optional:
            -> []
    - If the user did not reference timing, return [].
 
+3. metadata_only
+   - true when the question can be answered by selecting transcript chunks by
+     metadata only, without semantic meaning in the question.
+   - Use true for pure recency/time/speaker-summary requests such as:
+       "what was said in the last 10 minutes?"
+       "summarize the first five minutes"
+       "what did Alice say between minute 3 and minute 8?"
+   - Use false when the question asks about a topic, decision, action item,
+     or concept that needs semantic search, even if it also has time/speaker
+     hints.
+
+When CURRENT MEETING DURATION is provided, it is the latest available audio
+timestamp in seconds. Use it to convert relative recency questions into
+absolute time ranges:
+   "last 10 minutes" with duration 1500 -> [{"start": 900, "end": 1500}]
+Clamp the start to 0 when the requested lookback is longer than the meeting.
+If CURRENT MEETING DURATION is not provided and the user asks for "last X
+minutes", leave time_ranges empty rather than inventing an end timestamp.
+
 Return ONLY the JSON object that matches the response schema. No prose, no
 explanation. If the question contains no hints at all, return
-{"speakers": [], "time_ranges": []}.
+{"speakers": [], "time_ranges": [], "metadata_only": false}.
 """
 
 
@@ -91,7 +110,9 @@ class QuestionExtractor:
         self._model = model
         self._client = genai.Client(api_key=api_key)
 
-    async def extract(self, question: str) -> ExtractedQuestion:
+    async def extract(
+        self, question: str, current_duration: Optional[float] = None
+    ) -> ExtractedQuestion:
         """
         Parse one user question into ``ExtractedQuestion``.
 
@@ -103,7 +124,16 @@ class QuestionExtractor:
         if not text:
             return ExtractedQuestion()
 
-        prompt = f"{_PROMPT_INSTRUCTIONS}\n\nUSER QUESTION:\n{text}\n"
+        duration_text = (
+            f"{float(current_duration):.3f} seconds"
+            if current_duration is not None and current_duration >= 0
+            else "not provided"
+        )
+        prompt = (
+            f"{_PROMPT_INSTRUCTIONS}\n\n"
+            f"CURRENT MEETING DURATION:\n{duration_text}\n\n"
+            f"USER QUESTION:\n{text}\n"
+        )
 
         try:
             response = await asyncio.to_thread(
