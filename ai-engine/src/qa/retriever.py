@@ -427,6 +427,20 @@ class QARetriever:
 
         return _rows_to_chunks(rows)
 
+    async def retrieve_meeting_chronological(
+        self,
+        meeting_id: int,
+    ) -> List[RetrievedChunk]:
+        """
+        Return all chunks for a meeting, ordered chronologically.
+        Used for MOM generation.
+        """
+        return await self._retrieve_metadata_only(
+            meeting_id=meeting_id,
+            speakers=set(),
+            hints=ExtractedQuestion(),
+            chunk_limit=100000,
+        )
 
 def _rows_to_chunks(rows) -> List[RetrievedChunk]:
     """Map asyncpg rows from any QA retrieval path into RetrievedChunk."""

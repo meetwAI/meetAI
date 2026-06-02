@@ -55,7 +55,7 @@ from fastapi.responses import StreamingResponse
 from src.core.config import settings
 from src.infra.db import create_pool, close_pool
 from src.qa.answer_streamer import AnswerStreamer, StreamError
-from src.qa.models import QARequest, RetrievedChunk
+from src.qa.models import QARequest, RetrievedChunk, MOMRequest
 from src.qa.question_extractor import QuestionExtractor
 from src.qa.retriever import QARetriever
 
@@ -332,3 +332,37 @@ async def qa_endpoint(req: QARequest) -> StreamingResponse:
             "Connection": "keep-alive",
         },
     )
+
+@app.post("/mom")
+async def mom_endpoint(req: MOMRequest) -> dict:
+    """
+    Synchronous JSON endpoint for generating Minutes of Meeting.
+    Used internally by the gateway after a session ends.
+    """
+    if _db_pool is None:
+        raise HTTPException(status_code=503, detail="QA service not ready")
+    if req.meeting_id <= 0 or req.user_id <= 0:
+        raise HTTPException(
+            status_code=400, detail="meeting_id and user_id must be positive integers"
+        )
+
+    assert _retriever is not None and _streamer is not None
+
+    chunks = await _retriever.retrieve_meeting_chronological(req.meeting_id)
+    if req.speaker_map:
+        chunks = _display_map_chunks(chunks, req.speaker_map)
+
+    full_parts: list[str] = []
+    stream_failed: str | None = None
+
+    async for item in _streamer.stream_minutes_of_meeting(chunks, settings.MOM_MODEL):
+        if isinstance(item, StreamError):
+            stream_failed = item.message
+            break
+        full_parts.append(item)
+
+    if stream_failed is not None:
+        raise HTTPException(status_code=500, detail=stream_failed)
+
+    full_answer = "".join(full_parts).strip()
+    return {"answer": full_answer}

@@ -458,7 +458,9 @@ const updateMeetingQaCache = async ({
         startTime: meeting.startTime,
         endTime: meeting.endTime,
       }),
+      updatedAt: Date.now(),
     };
+
     let shouldWrite = true;
 
     try {
@@ -491,6 +493,7 @@ const updateMeetingQaCache = async ({
         ttlSeconds: MEETING_QA_CACHE_TTL_SECONDS,
       });
     }
+
     try {
       const keys = await meetingCacheClient.keys(`${MEETING_QA_CACHE_PREFIX}*`);
       const allEntries = {};
@@ -515,6 +518,57 @@ const updateMeetingQaCache = async ({
     console.warn('[gateway] failed updating QA meeting cache', error);
   }
   return null;
+};
+
+const generateAndPersistMOM = async ({ meetingId, userId, authToken }) => {
+  try {
+    let speakerMap = null;
+    const redisReady = await ensureRedisReady(meetingCacheClient, 'gateway');
+    if (redisReady) {
+      const cacheKey = `${MEETING_QA_CACHE_PREFIX}${meetingId}`;
+      const existing = await meetingCacheClient.get(cacheKey);
+      if (existing) {
+        const existingParsed = JSON.parse(existing);
+        speakerMap = normalizeSpeakerMap(existingParsed?.speakers);
+      }
+    }
+
+    const aiRes = await fetch(`${QA_SERVICE_URL}/mom`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        meeting_id: meetingId,
+        user_id: userId,
+        speaker_map: speakerMap,
+      }),
+    });
+
+    if (!aiRes.ok) {
+      throw new Error(`QA service returned ${aiRes.status}`);
+    }
+
+    const { answer } = await aiRes.json();
+    if (!answer) {
+      return;
+    }
+
+    const msRes = await fetch(`${MEETING_SERVICE_URL}/meetings/${meetingId}/summary`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: authToken,
+      },
+      body: JSON.stringify({ summary: answer }),
+    });
+
+    if (!msRes.ok) {
+      throw new Error(`Meeting service returned ${msRes.status}`);
+    }
+
+    console.log(`[gateway] MOM generated and saved for meeting ${meetingId}`);
+  } catch (error) {
+    console.error(`[gateway] Failed to generate/persist MOM for meeting ${meetingId}:`, error);
+  }
 };
 
 app.get('/health', (_req, res) => {
@@ -1050,6 +1104,10 @@ app.patch('/meetings/:meetingId/transcript', (req, res) =>
   proxyMeetingService('PATCH', `/meetings/${encodeURIComponent(req.params.meetingId)}/transcript`, req, res),
 );
 
+app.patch('/meetings/:meetingId/summary', (req, res) =>
+  proxyMeetingService('PATCH', `/meetings/${encodeURIComponent(req.params.meetingId)}/summary`, req, res),
+);
+
 app.post('/meetings/:meetingId/complete', (req, res) =>
   proxyMeetingService('POST', `/meetings/${encodeURIComponent(req.params.meetingId)}/complete`, req, res),
 );
@@ -1229,6 +1287,10 @@ io.on('connection', (socket) => {
         console.log('[gateway] ai session ready_to_stop', { meetingId });
         emitSessionEnded();
         cleanupAiSocket();
+        
+        generateAndPersistMOM({ meetingId, userId, authToken })
+          .catch((err) => console.error('[gateway] MOM generation failed', err));
+
         aiSocket = null;
         activeMeetingId = null;
         lastLoggedTranscript = '';

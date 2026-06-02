@@ -78,3 +78,12 @@ class QARequest(BaseModel):
     question: str
     current_duration: Optional[float] = None
     speaker_map: Optional[Dict[str, str]] = None
+
+
+class MOMRequest(BaseModel):
+    """
+    Body of ``POST /mom``.
+    """
+    meeting_id: int
+    user_id: int
+    speaker_map: Optional[Dict[str, str]] = None

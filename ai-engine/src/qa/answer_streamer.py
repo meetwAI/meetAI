@@ -65,6 +65,18 @@ RULES:
   items the speakers enumerated.
 """
 
+_MOM_PROMPT_INSTRUCTIONS = """\
+You are an expert meeting assistant. Your task is to write the Minutes of Meeting (MOM) for the provided meeting transcript chunks. 
+The transcript chunks are presented chronologically. 
+
+RULES:
+- Provide a structured summary with clear sections (e.g., Overview, Key Topics Discussed, Action Items).
+- Be concise and professional.
+- Rely ONLY on the provided transcript chunks. Do not hallucinate or invent information.
+- Mention speakers by name when relevant.
+- Do not include technical metadata (like chunk_ids) in the final output.
+"""
+
 
 # Sentinel returned mid-stream when the underlying SDK raises. The QA server
 # pattern-matches on the type — keeps the public type small.
@@ -143,12 +155,32 @@ class AnswerStreamer:
             f"USER QUESTION:\n{text}\n\n"
             f"TRANSCRIPT CHUNKS:\n{_format_chunks(chunks)}\n"
         )
-        async for item in self._stream_prompt(prompt):
+        async for item in self._stream_prompt(prompt, self._model):
+            yield item
+
+    async def stream_minutes_of_meeting(
+        self,
+        chunks: List[RetrievedChunk],
+        model: str,
+    ) -> AsyncIterator[str | StreamError]:
+        """
+        Generate MOM using the specified model.
+        """
+        if not chunks:
+            yield self.REFUSAL_NO_CONTEXT
+            return
+
+        prompt = (
+            f"{_MOM_PROMPT_INSTRUCTIONS}\n\n"
+            f"TRANSCRIPT CHUNKS:\n{_format_chunks(chunks)}\n"
+        )
+        async for item in self._stream_prompt(prompt, model):
             yield item
 
     async def _stream_prompt(
         self,
         prompt: str,
+        model: str,
     ) -> AsyncIterator[str | StreamError]:
         # Open the streaming call in a worker thread; google-genai's stream
         # iterator is synchronous. We then pull from it one chunk at a time,
@@ -156,7 +188,7 @@ class AnswerStreamer:
         try:
             stream = await asyncio.to_thread(
                 self._client.models.generate_content_stream,
-                model=self._model,
+                model=model,
                 contents=prompt,
                 config=genai_types.GenerateContentConfig(
                     # No structured-output schema here: free text is the

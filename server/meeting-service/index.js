@@ -985,6 +985,45 @@ app.delete('/meetings/:meetingId', (req, res) => {
     });
 });
 
+app.patch('/meetings/:meetingId/summary', (req, res) => {
+  const userId = requireUserId(req, res);
+  if (!userId) {
+    return;
+  }
+
+  const meetingId = Number(req.params.meetingId);
+  if (!Number.isFinite(meetingId) || meetingId <= 0) {
+    return res.status(400).json({ message: 'Invalid meeting id.' });
+  }
+
+  const { summary } = req.body;
+  if (typeof summary !== 'string') {
+    return res.status(400).json({ message: 'Summary must be a string.' });
+  }
+
+  return query(
+    `UPDATE meetings
+     SET summarisation = $1
+     WHERE id = $2 AND user_id = $3
+     RETURNING id, summarisation`,
+    [summary, meetingId, userId],
+  )
+    .then((result) => {
+      const row = result.rows[0];
+      if (!row) {
+        return res.status(404).json({ message: 'Meeting not found.' });
+      }
+      return res.json({
+        id: row.id,
+        summary: row.summarisation || '',
+      });
+    })
+    .catch((error) => {
+      console.error('[meeting-service] failed to update meeting summary', error);
+      return res.status(500).json({ message: 'Failed to update meeting summary.' });
+    });
+});
+
 app.post('/meetings/:meetingId/complete', (req, res) => {
   const userId = requireUserId(req, res);
   if (!userId) {
