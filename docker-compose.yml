@@ -15,7 +15,7 @@ services:
     build:
       context: ./server
       dockerfile: Dockerfile
-    command: node --inspect=0.0.0.0:9229 auth-service/index.js
+    command: node --inspect=0.0.0.0:9229 auth-service/server.js
     env_file:
       - ./server/.env
     environment:

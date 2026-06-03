@@ -1,11 +1,49 @@
+# Env files (per-service .env, gitignored — see .env.example for the template)
 .env
-*CHECKPOINT1/
-.antigravitycli/
-docker-compose.mac.yml
+.env.local
+.env.*.local
+
+# IDE / agent metadata
 .vscode/settings.json
-# macOS system files
+.antigravitycli/
+.claude/
+review.md
+
+# Legacy checkpoints
+*CHECKPOINT1/
+
+# Local override compose files
+docker-compose.mac.yml
+
+# OS junk
 .DS_Store
-# Python cache files
+Thumbs.db
+
+# Python cache & venv
 __pycache__/
 *.py[cod]
 *$py.class
+.venv/
+.pytest_cache/
+
+# Node / web build artifacts
+node_modules/
+dist/
+build/
+coverage/
+
+# Logs & temp run state
+*.log
+.run/
+
+# TLS keys (NOTE: the committed localhost.pem / localhost-key.pem
+# are tracked from a pre-restructure state; removal is a follow-up PR.
+# This rule prevents NEW *.pem files from being committed.)
+*.pem
+*.key
+*.crt
+
+# One-off dumps / junk files (also git-rm'd in M1)
+*.zip
+Screenshot *.png
+New Text Document*

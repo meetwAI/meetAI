@@ -2,7 +2,7 @@
   "scripts": {
     "start": "node meeting-service/index.js",
     "start:gateway": "node gateway/app.js",
-    "start:auth": "node auth-service/index.js",
+    "start:auth": "node auth-service/server.js",
     "migrate:google-oauth-security": "node auth-service/scripts/migrateGoogleOauthSecurity.js"
   },
   "dependencies": {
