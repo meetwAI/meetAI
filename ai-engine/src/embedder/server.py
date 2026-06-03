@@ -69,7 +69,7 @@ async def health() -> dict:
     # We don't force-load the model here — health should be cheap. The
     # ``model_loaded`` flag tells the caller whether the next /embed will pay
     # the cold-start cost.
-    from src.infra import embeddings as _emb
+    from src.embedder import embeddings as _emb
     return {
         "status": "ok",
         "model_loaded": _emb._embed_model is not None,

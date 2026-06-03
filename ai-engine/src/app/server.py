@@ -2,17 +2,14 @@ import asyncio
 import logging
 import uuid
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
 
 from src.core.config import settings
 from src.infra.broker import AudioBroker
 
 
-STATIC_DIR = Path(__file__).parent.parent / "web" / "static"
 logger = logging.getLogger(__name__)
 
 
@@ -29,13 +26,10 @@ async def lifespan(app: FastAPI):
     await app.state.broker.close()
 
 
+# The legacy demo UI under src/web/static was removed in the CHECKPOINT2 → ai-engine
+# refactor; the React client at client/meetai-web is now the only consumer and
+# only uses /health and the /asr websocket. No StaticFiles mount needed.
 app = FastAPI(title="Standalone ASR Gateway", lifespan=lifespan)
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-
-
-@app.get("/")
-async def index():
-    return FileResponse(STATIC_DIR / "index.html")
 
 
 @app.get("/health")

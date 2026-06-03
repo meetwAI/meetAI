@@ -34,11 +34,11 @@ from src.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-_MODEL_REPO = "BAAI/bge-m3"
-EMBED_DIM = 1024
+_MODEL_REPO = settings.EMBED_MODEL_REPO
+EMBED_DIM = settings.EMBED_DIM
 _MAX_SYNC_BATCH = 64  # above this we offload to thread to keep event loop free
 
-# HTTP timeouts for service mode. Embedding bge-m3 on a small batch is fast,
+# HTTP timeouts for service mode. Embedding on a small batch is fast,
 # but the *first* request on a cold server triggers model download/load, so
 # the read timeout has to be generous.
 _HTTP_CONNECT_TIMEOUT = 5.0

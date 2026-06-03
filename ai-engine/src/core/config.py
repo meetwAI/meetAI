@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     EMBEDDER_PORT: int = Field(default=8200)
     QA_PORT: int = Field(default=8100)
 
+    EMBED_MODEL_REPO: str = Field(default="BAAI/bge-small-en-v1.5")
+    EMBED_DIM: int = Field(default=384)
+
     HOST: str = Field(default="0.0.0.0")
     PORT: int = Field(default=8000)
     LOG_LEVEL: str = Field(default="INFO")

@@ -6,14 +6,26 @@ TIMEOUT=${1:-180}
 echo "Bringing up containers (build if needed)..."
 docker compose up --build -d
 
-targets=("http://localhost:4010/health" "http://localhost:4020/health" "http://localhost:4001/health")
+# auth-service listens on HTTPS by default (see compose: AUTH_USE_HTTPS=true).
+# Mirror that here so curl picks the right scheme; `-k` skips localhost cert
+# validation since we ship a self-signed pair.
+auth_scheme="https"
+if [ "${AUTH_USE_HTTPS:-true}" != "true" ]; then
+  auth_scheme="http"
+fi
+
+targets=(
+  "http://localhost:4010/health"
+  "${auth_scheme}://localhost:4020/health"
+  "http://localhost:4001/health"
+)
 start=$(date +%s)
 
 for t in "${targets[@]}"; do
   echo "Waiting for $t ..."
   ok=0
   while [ $ok -eq 0 ]; do
-    if curl -fsS --max-time 5 "$t" >/dev/null 2>&1; then
+    if curl -fsSk --max-time 5 "$t" >/dev/null 2>&1; then
       ok=1
       break
     fi

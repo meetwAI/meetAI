@@ -6,7 +6,14 @@ param(
 Write-Host 'Bringing up containers (build if needed)...'
 docker.exe compose up --build -d
 
-$targets = @("http://localhost:4010/health","http://localhost:4020/health","http://localhost:4001/health")
+# auth-service listens on HTTPS by default (see compose: AUTH_USE_HTTPS=true).
+# Mirror that here, and skip cert validation for the self-signed localhost pair.
+$authScheme = if ($env:AUTH_USE_HTTPS -and $env:AUTH_USE_HTTPS -ne 'true') { 'http' } else { 'https' }
+$targets = @(
+  "http://localhost:4010/health",
+  "${authScheme}://localhost:4020/health",
+  "http://localhost:4001/health"
+)
 $start = Get-Date
 
 foreach ($t in $targets) {
@@ -14,7 +21,8 @@ foreach ($t in $targets) {
   $ok = $false
   while (-not $ok) {
     try {
-      $r = Invoke-RestMethod -Uri $t -Method Get -TimeoutSec 5
+      # -SkipCertificateCheck for the self-signed localhost cert on auth-service.
+      $r = Invoke-RestMethod -Uri $t -Method Get -TimeoutSec 5 -SkipCertificateCheck
       if ($r -and ($r.status -eq 'ok' -or $r.Status -eq 'ok')) { $ok = $true; break }
       $ok = $true
     } catch {
