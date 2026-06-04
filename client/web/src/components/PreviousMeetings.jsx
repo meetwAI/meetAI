@@ -2,15 +2,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useSignals } from '@preact/signals-react/runtime';
-import { fetchWithAuth } from '../api/fetchWithAuth';
+import { fetchWithAuth } from '../lib/http';
 import moment from 'moment';
 import {
   closePreviousMeetingsSidebar,
   openPreviousMeetingsSidebar,
   sidebarState,
   togglePreviousMeetingsSidebar,
-} from '../globals';
-import { parseSseStream } from '../api/sseStream'
+} from '../state';
+import { parseSseStream } from '../lib/sse'
 const normalizeTranscriptText = (value) => String(value || '').trim().replace(/\s+/g, ' ');
 
 const mergeTranscriptText = (baseText, nextText) => {

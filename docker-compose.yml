@@ -263,7 +263,7 @@ services:
 
   web:
     build:
-      context: ./client/meetai-web
+      context: ./client/web
       dockerfile: Dockerfile.dev
     command: npm run dev -- --host 0.0.0.0 --port 5173
     environment:
@@ -278,18 +278,18 @@ services:
     develop:
       watch:
         - action: sync
-          path: ./client/meetai-web/src
+          path: ./client/web/src
           target: /app/src
         - action: sync
-          path: ./client/meetai-web/public
+          path: ./client/web/public
           target: /app/public
         - action: rebuild
-          path: ./client/meetai-web/package.json
+          path: ./client/web/package.json
     depends_on:
       gateway:
         condition: service_healthy
     volumes:
-      - ./client/meetai-web:/app
+      - ./client/web:/app
       - /app/node_modules
       - ./localhost.pem:/app/localhost.pem:ro
       - ./localhost-key.pem:/app/localhost-key.pem:ro

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Container, Row, Col, Form, Button } from 'react-bootstrap';
 import './Login.css';
-import { fetchWithAuth } from '../api/fetchWithAuth';
+import { fetchWithAuth } from '../lib/http';
 
 const FIELDS = [
     { id: 'name', label: 'Full Name', type: 'text', placeholder: 'Jane Smith', icon: 'badge' },

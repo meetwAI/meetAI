@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Container, Row, Col, Form, Button } from 'react-bootstrap';
 import './Login.css';
-import { connectSocket } from '../api/socketClient';
+import { connectSocket } from '../lib/socket';
 
 export default function Signup() {
   const API_URL = import.meta.env.VITE_AUTH_URL || import.meta.env.VITE_API_URL;

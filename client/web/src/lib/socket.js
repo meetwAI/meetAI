@@ -1,4 +1,5 @@
 import { io } from 'socket.io-client';
+import { AUTH_BASE } from './config.js';
 
 let socket = null;
 
@@ -6,7 +7,7 @@ export function getSocket() {
   return socket;
 }
 
-export function connectSocket(url = import.meta.env.VITE_AUTH_URL || 'https://localhost:4010') {
+export function connectSocket(url = AUTH_BASE) {
   if (socket) {
     try {
       if (!socket.connected) socket.connect();

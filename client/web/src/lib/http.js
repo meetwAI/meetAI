@@ -1,4 +1,6 @@
-const API_BASE_URL = (import.meta.env.VITE_AUTH_URL || 'http://localhost:4010').replace(/\/$/, '');
+import { AUTH_BASE } from './config.js';
+
+const API_BASE_URL = AUTH_BASE;
 
 const refreshAccessToken = async () => {
   const response = await fetch(`${API_BASE_URL}/refresh`, {

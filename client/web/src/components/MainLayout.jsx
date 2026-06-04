@@ -2,8 +2,8 @@ import React from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import './MainLayout.css';
-import { getSocket, connectSocket } from '../api/socketClient';
-import { fetchWithAuth } from '../api/fetchWithAuth';
+import { getSocket, connectSocket } from '../lib/socket';
+import { fetchWithAuth } from '../lib/http';
 import { Menu, Mic, Plus } from 'lucide-react';
 
 const MainLayout = () => {

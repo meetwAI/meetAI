@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { disconnectSocket } from '../api/socketClient';
-import { fetchWithAuth } from '../api/fetchWithAuth';
+import { disconnectSocket } from '../lib/socket';
+import { fetchWithAuth } from '../lib/http';
 import {
   User,
   Mail,

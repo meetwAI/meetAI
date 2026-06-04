@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { fetchWithAuth } from '../api/fetchWithAuth';
+import { fetchWithAuth } from '../lib/http';
 import moment from 'moment';
 import './Dashboard.css';
 

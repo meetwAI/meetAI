@@ -1,6 +1,6 @@
 /**
- * sseStream.js
- * ------------
+ * sse.js
+ * ------
  * Minimal Server-Sent Events parser for `fetch()` ReadableStream bodies.
  *
  * EventSource has two limitations we want to avoid:
