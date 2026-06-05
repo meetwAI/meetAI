@@ -96,6 +96,10 @@ def _format_chunks(chunks: List[RetrievedChunk]) -> str:
       - the chunk text itself.
     """
     lines: List[str] = []
+    try:
+        logger.debug("Formatting %d chunks for prompt: %s", len(chunks), [c.chunk_id for c in chunks])
+    except Exception:
+        pass
     for c in chunks:
         meta_bits: List[str] = [f"chunk_id={c.chunk_id}", f"topic={c.topic!r}"]
         if c.speakers:
@@ -150,11 +154,21 @@ class AnswerStreamer:
             yield self.REFUSAL_NO_CONTEXT
             return
 
+        try:
+            logger.info(
+                "AnswerStreamer.stream_answer called: question_len=%s chunks=%s",
+                len(text),
+                [c.chunk_id for c in chunks],
+            )
+        except Exception:
+            pass
+
         prompt = (
             f"{_PROMPT_INSTRUCTIONS}\n\n"
             f"USER QUESTION:\n{text}\n\n"
             f"TRANSCRIPT CHUNKS:\n{_format_chunks(chunks)}\n"
         )
+        logger.debug("Answer prompt preview (len=%d): %s", len(prompt), prompt[:1000])
         async for item in self._stream_prompt(prompt, self._model):
             yield item
 
@@ -174,6 +188,7 @@ class AnswerStreamer:
             f"{_MOM_PROMPT_INSTRUCTIONS}\n\n"
             f"TRANSCRIPT CHUNKS:\n{_format_chunks(chunks)}\n"
         )
+        logger.debug("MOM prompt preview (len=%d): %s", len(prompt), prompt[:1000])
         async for item in self._stream_prompt(prompt, model):
             yield item
 
@@ -186,6 +201,8 @@ class AnswerStreamer:
         # iterator is synchronous. We then pull from it one chunk at a time,
         # also in a worker thread, so the event loop never blocks.
         try:
+            logger.info("Opening Gemini stream: model=%s prompt_len=%d", model, len(prompt))
+            logger.debug("Stream prompt preview: %s", prompt[:1000])
             stream = await asyncio.to_thread(
                 self._client.models.generate_content_stream,
                 model=model,
@@ -196,6 +213,7 @@ class AnswerStreamer:
                     response_mime_type="text/plain",
                 ),
             )
+            logger.info("Gemini stream opened successfully: model=%s", model)
         except Exception as exc:
             logger.exception("AnswerStreamer: failed to open Gemini stream")
             yield StreamError(message=f"Gemini stream open failed: {exc}")
@@ -217,12 +235,14 @@ class AnswerStreamer:
             while True:
                 item = await asyncio.to_thread(_next_chunk, iterator)
                 if item is _DONE:
+                    logger.info("Gemini stream closed cleanly: model=%s", model)
                     return
                 # google-genai chunk objects carry incremental ``.text``.
                 # Some chunks are tool-call / safety placeholders with no
                 # text; skip those without ending the stream.
                 delta = getattr(item, "text", None)
                 if delta:
+                    logger.debug("Gemini delta chunk: %s", delta)
                     yield delta
         except Exception as exc:
             logger.exception("AnswerStreamer: error mid-stream")

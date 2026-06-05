@@ -417,18 +417,19 @@ const updateMeetingQaCache = async ({
     const redisReady = await ensureRedisReady(meetingCacheClient, 'gateway');
     if (!redisReady) {
       console.warn('[gateway] redis not ready; skipping QA meeting cache');
-      return null;
     }
 
     const cacheKey = `${MEETING_QA_CACHE_PREFIX}${meetingId}`;
     let existingParsed = null;
-    try {
-      const existing = await meetingCacheClient.get(cacheKey);
-      if (existing) {
-        existingParsed = JSON.parse(existing);
+    if (redisReady) {
+      try {
+        const existing = await meetingCacheClient.get(cacheKey);
+        if (existing) {
+          existingParsed = JSON.parse(existing);
+        }
+      } catch (error) {
+        console.warn('[gateway] failed reading QA cache', error);
       }
-    } catch (error) {
-      console.warn('[gateway] failed reading QA cache', error);
     }
 
     const meeting = await fetchMeetingMetadata({ meetingId, userId, authToken });
@@ -436,7 +437,7 @@ const updateMeetingQaCache = async ({
       return null;
     }
 
-    const cachedSpeakers = normalizeSpeakerMap(existingParsed?.speakers);
+    const cachedSpeakers = redisReady ? normalizeSpeakerMap(existingParsed?.speakers) : {};
     const meetingSpeakers = normalizeSpeakerMap(meeting?.speakerMap);
     const speakerMap = hasSpeakersOverride
       ? normalizeSpeakerMap(speakersOverride)
@@ -461,57 +462,59 @@ const updateMeetingQaCache = async ({
       updatedAt: Date.now(),
     };
 
-    let shouldWrite = true;
+    if (redisReady) {
+      let shouldWrite = true;
 
-    try {
-      if (existingParsed) {
-        if (
-          typeof existingParsed?.duration === 'number' &&
-          areSpeakerMapsEqual(existingParsed?.speakers, payload.speakers) &&
-          existingParsed.duration === payload.duration
-        ) {
-          shouldWrite = false;
-        }
-      }
-    } catch (error) {
-      console.warn('[gateway] failed comparing QA cache', error);
-    }
-
-    if (shouldWrite) {
-      await meetingCacheClient.set(cacheKey, JSON.stringify(payload), {
-        EX: MEETING_QA_CACHE_TTL_SECONDS,
-      });
-      console.log('[gateway] QA meeting cache set', {
-        key: cacheKey,
-        ttlSeconds: MEETING_QA_CACHE_TTL_SECONDS,
-        payload,
-      });
-    } else {
-      await meetingCacheClient.expire(cacheKey, MEETING_QA_CACHE_TTL_SECONDS);
-      console.log('[gateway] QA meeting cache refresh', {
-        key: cacheKey,
-        ttlSeconds: MEETING_QA_CACHE_TTL_SECONDS,
-      });
-    }
-
-    try {
-      const keys = await meetingCacheClient.keys(`${MEETING_QA_CACHE_PREFIX}*`);
-      const allEntries = {};
-      for (const k of keys || []) {
-        try {
-          const raw = await meetingCacheClient.get(k);
-          try {
-            allEntries[k] = raw ? JSON.parse(raw) : null;
-          } catch (_p) {
-            allEntries[k] = raw;
+      try {
+        if (existingParsed) {
+          if (
+            typeof existingParsed?.duration === 'number' &&
+            areSpeakerMapsEqual(existingParsed?.speakers, payload.speakers) &&
+            existingParsed.duration === payload.duration
+          ) {
+            shouldWrite = false;
           }
-        } catch (e) {
-          allEntries[k] = null;
         }
+      } catch (error) {
+        console.warn('[gateway] failed comparing QA cache', error);
       }
-      console.log('[gateway] QA meeting cache all entries', allEntries);
-    } catch (err) {
-      console.warn('[gateway] failed to enumerate QA cache entries', err);
+
+      if (shouldWrite) {
+        await meetingCacheClient.set(cacheKey, JSON.stringify(payload), {
+          EX: MEETING_QA_CACHE_TTL_SECONDS,
+        });
+        console.log('[gateway] QA meeting cache set', {
+          key: cacheKey,
+          ttlSeconds: MEETING_QA_CACHE_TTL_SECONDS,
+          payload,
+        });
+      } else {
+        await meetingCacheClient.expire(cacheKey, MEETING_QA_CACHE_TTL_SECONDS);
+        console.log('[gateway] QA meeting cache refresh', {
+          key: cacheKey,
+          ttlSeconds: MEETING_QA_CACHE_TTL_SECONDS,
+        });
+      }
+
+      try {
+        const keys = await meetingCacheClient.keys(`${MEETING_QA_CACHE_PREFIX}*`);
+        const allEntries = {};
+        for (const k of keys || []) {
+          try {
+            const raw = await meetingCacheClient.get(k);
+            try {
+              allEntries[k] = raw ? JSON.parse(raw) : null;
+            } catch (_p) {
+              allEntries[k] = raw;
+            }
+          } catch (e) {
+            allEntries[k] = null;
+          }
+        }
+        console.log('[gateway] QA meeting cache all entries', allEntries);
+      } catch (err) {
+        console.warn('[gateway] failed to enumerate QA cache entries', err);
+      }
     }
     return payload;
   } catch (error) {
@@ -1049,11 +1052,15 @@ app.post('/meetings/:meetingId/messages', async (req, res) => {
         userId,
         authToken: req.authToken,
       });
-      if (payload) {
-        req.body.speaker_map = payload.speakers;
-        if (typeof payload.duration === 'number') {
-          req.body.current_duration = payload.duration / 1000;
-        }
+      const speakerMap = payload?.speakers ?? normalizeSpeakerMap(req.body?.speaker_map);
+      req.body.speaker_map = speakerMap;
+
+      const durationSeconds =
+        typeof payload?.duration === 'number'
+          ? payload.duration / 1000
+          : Number(req.body?.current_duration);
+      if (Number.isFinite(durationSeconds)) {
+        req.body.current_duration = durationSeconds;
       }
     }
   }

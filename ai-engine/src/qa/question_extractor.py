@@ -124,6 +124,12 @@ class QuestionExtractor:
         if not text:
             return ExtractedQuestion()
 
+        logger.info(
+            "QuestionExtractor.extract called: question_len=%s current_duration=%s",
+            len(text),
+            current_duration,
+        )
+
         duration_text = (
             f"{float(current_duration):.3f} seconds"
             if current_duration is not None and current_duration >= 0
@@ -134,6 +140,8 @@ class QuestionExtractor:
             f"CURRENT MEETING DURATION:\n{duration_text}\n\n"
             f"USER QUESTION:\n{text}\n"
         )
+        # Prompt preview may contain user content; keep it to a reasonable length
+        logger.debug("QuestionExtractor prompt preview: %s", prompt[:1000])
 
         try:
             response = await asyncio.to_thread(
@@ -153,7 +161,15 @@ class QuestionExtractor:
             return ExtractedQuestion()
 
         parsed: Optional[ExtractedQuestion] = getattr(response, "parsed", None)
+        # Log raw SDK response for debugging
+        raw_text = getattr(response, "text", None)
+        logger.debug("QuestionExtractor raw SDK text preview: %s", raw_text[:1000] if raw_text else None)
+
         if isinstance(parsed, ExtractedQuestion):
+            try:
+                logger.info("QuestionExtractor parsed hints: %s", parsed.model_dump())
+            except Exception:
+                logger.info("QuestionExtractor parsed hints (no dump available)")
             return parsed
 
         # Fallback path: SDK didn't populate ``response.parsed`` (rare but
