@@ -1,7 +1,8 @@
 const path = require('path');
 const dotenv = require('dotenv');
 
-dotenv.config({ path: path.resolve(__dirname, '..', '.env') });
+// shared/src/ → server/.env is two levels up (../../.env from this file).
+dotenv.config({ path: path.resolve(__dirname, '..', '..', '.env') });
 
 const requireEnv = (name) => {
   const value = process.env[name];

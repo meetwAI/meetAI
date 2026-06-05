@@ -6,8 +6,8 @@ const {
   getUserByGoogleIdHash,
   createUser,
   updateGoogleIdentityFields,
-} = require('./userService');
-const { hashGoogleId } = require('./googleSecretsService');
+} = require('../user');
+const { hashGoogleId } = require('./secrets');
 
 const normalizeText = (value) => String(value || '').trim();
 

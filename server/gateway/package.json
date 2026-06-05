@@ -1,0 +1,17 @@
+{
+  "name": "@meetai/gateway",
+  "version": "0.0.0",
+  "private": true,
+  "type": "commonjs",
+  "main": "src/app.js",
+  "scripts": {
+    "start": "node src/app.js"
+  },
+  "dependencies": {
+    "@meetai/shared": "workspace:*",
+    "cors": "^2.8.5",
+    "express": "^5.2.1",
+    "socket.io": "^4.8.1",
+    "ws": "^8.20.0"
+  }
+}

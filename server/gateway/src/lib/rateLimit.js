@@ -1,4 +1,4 @@
-const { getRedisClient, ensureRedisReady } = require('../../config/redis');
+const { getRedisClient, ensureRedisReady } = require('@meetai/shared/redis');
 
 const redisClient = getRedisClient({
   cacheKey: 'gateway',

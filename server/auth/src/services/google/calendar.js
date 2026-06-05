@@ -1,4 +1,4 @@
-const { requireEnv } = require('../../config/env');
+const { requireEnv } = require('@meetai/shared/env');
 
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const GOOGLE_CALENDAR_EVENTS_URL = 'https://www.googleapis.com/calendar/v3/calendars/primary/events';

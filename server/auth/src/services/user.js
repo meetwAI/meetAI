@@ -1,5 +1,5 @@
-const { query, pool } = require('../../db/client');
-const { encryptGoogleRefreshToken } = require('./googleSecretsService');
+const { query, pool } = require('@meetai/shared/db');
+const { encryptGoogleRefreshToken } = require('./google/secrets');
 
 const getUserByUsername = async (username) => {
   const result = await query(

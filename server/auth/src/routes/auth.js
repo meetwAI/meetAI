@@ -8,9 +8,9 @@ const {
   revokeUserRefreshToken,
   JWT_TTL_SECONDS,
   REFRESH_TTL_SECONDS,
-} = require('../services/tokenService');
-const { hashPassword, verifyPassword, isPasswordHash } = require('../services/passwordService.js');
-const { fetchCalendarEvents, validateGoogleCalendarAccess } = require('../services/googleCalendarService');
+} = require('../services/token');
+const { hashPassword, verifyPassword, isPasswordHash } = require('../services/password');
+const { fetchCalendarEvents, validateGoogleCalendarAccess } = require('../services/google/calendar');
 const {
   getUserByUsername,
   getUserById,
@@ -20,7 +20,7 @@ const {
   updateUserProfile,
   persistGoogleTokensForUser,
   clearGoogleTokensForUser,
-} = require('../services/userService');
+} = require('../services/user');
 const {
   GOOGLE_LOGIN_SCOPES,
   GOOGLE_CALENDAR_SCOPES,
@@ -31,14 +31,12 @@ const {
   consumeGoogleOauthSessionMode,
   estimateGoogleAccessTokenExpiry,
   getPkceForState,
-} = require('../services/googleAuthService.js');
-const { decryptGoogleRefreshToken } = require('../services/googleSecretsService');
+} = require('../services/google/auth');
+const { decryptGoogleRefreshToken } = require('../services/google/secrets');
 
 const router = express.Router();
 
 const setRefreshCookie = (res, refreshToken) => {
-  const useHttps = process.env.AUTH_USE_HTTPS === 'true';
-  const akram = process.env.auth_dev_mode === 'true';
   res.cookie('meetai_refresh', refreshToken, {
     httpOnly: true,
     sameSite: 'strict',
@@ -49,8 +47,6 @@ const setRefreshCookie = (res, refreshToken) => {
 };
 
 const setAccessCookie = (res, accessToken) => {
-  const useHttps = process.env.AUTH_USE_HTTPS === 'true';
-  const akram = process.env.auth_dev_mode === 'true';
   res.cookie('meetai_access', accessToken, {
     httpOnly: true,
     sameSite: 'strict',
@@ -61,8 +57,6 @@ const setAccessCookie = (res, accessToken) => {
 };
 
 const clearRefreshCookie = (res) => {
-  const useHttps = process.env.AUTH_USE_HTTPS === 'true';
-  const akram = process.env.auth_dev_mode === 'true';
   res.cookie('meetai_refresh', '', {
     httpOnly: true,
     sameSite: 'strict',

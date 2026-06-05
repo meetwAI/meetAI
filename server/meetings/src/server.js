@@ -2,8 +2,10 @@ const http = require('http');
 const express = require('express');
 const cors = require('cors');
 const os = require('os');
-const { requireNumberEnv } = require('../config/env');
-const { query } = require('../db/client');
+const { requireNumberEnv } = require('@meetai/shared/env');
+const { query, pool } = require('@meetai/shared/db');
+const { installShutdown } = require('@meetai/shared/shutdown');
+const { MEETING_QA_MAX_SPEAKERS } = require('@meetai/shared/constants');
 
 const PORT = requireNumberEnv('PORT');
 // QA service URL — host machine in dev (CHECKPOINT1 runs natively on macOS),
@@ -11,7 +13,7 @@ const PORT = requireNumberEnv('PORT');
 // Docker-for-Mac host bridge so containerised meeting-service can reach the
 // CHECKPOINT1 process the user runs in a host shell.
 const QA_SERVICE_URL = (process.env.QA_SERVICE_URL || 'http://ai-gateway:8000').replace(/\/+$/, '');
-const MAX_SPEAKER_COUNT = 4;
+const MAX_SPEAKER_COUNT = MEETING_QA_MAX_SPEAKERS;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -205,8 +207,16 @@ const fetchWithRetry = async (url, options, { attempts = 3, baseDelayMs = 250 } 
   throw lastError || new Error('fetch failed');
 };
 
+const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'https://localhost:5173';
+
 const app = express();
-app.use(cors({ origin: '*', methods: ['GET', 'POST', 'PATCH', 'DELETE'] }));
+app.use(
+  cors({
+    origin: FRONTEND_ORIGIN,
+    credentials: true,
+    methods: ['GET', 'POST', 'PATCH', 'DELETE'],
+  }),
+);
 app.use(express.json());
 
 app.get('/health', (_req, res) => {
@@ -1042,3 +1052,5 @@ server.listen(PORT, () => {
   // eslint-disable-next-line no-console
   console.log(`Meeting service listening on ${PORT} (hosted on ${os.hostname()})`);
 });
+
+installShutdown(server, { pool });

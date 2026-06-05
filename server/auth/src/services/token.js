@@ -1,7 +1,7 @@
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
-const { requireNumberEnv } = require('../../config/env');
-const { getRedisClient, ensureRedisReady } = require('../../config/redis');
+const { requireNumberEnv } = require('@meetai/shared/env');
+const { getRedisClient, ensureRedisReady } = require('@meetai/shared/redis');
 
 const readSecrets = () => {
   const activeSecret = process.env.JWT_ACTIVE_SECRET || process.env.JWT_SECRET || '';

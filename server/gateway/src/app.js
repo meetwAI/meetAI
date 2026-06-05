@@ -6,9 +6,15 @@ const cors = require('cors');
 const os = require('os');
 const { Server } = require('socket.io');
 const WebSocket = require('ws');
-const { requireEnv, requireNumberEnv } = require('../config/env');
-const { getRedisClient, ensureRedisReady } = require('../config/redis');
-const { loginRateLimiter } = require('./rate-limiters/loginRateLimiter');
+const { requireEnv, requireNumberEnv } = require('@meetai/shared/env');
+const { getRedisClient, ensureRedisReady } = require('@meetai/shared/redis');
+const { installShutdown } = require('@meetai/shared/shutdown');
+const {
+  MEETING_QA_CACHE_TTL_SECONDS,
+  MEETING_QA_CACHE_PREFIX,
+  MEETING_QA_MAX_SPEAKERS,
+} = require('@meetai/shared/constants');
+const { loginRateLimiter } = require('./lib/rateLimit');
 
 const PORT = requireNumberEnv('GATEWAY_PORT');
 const MEETING_SERVICE_URL = requireEnv('MEETING_SERVICE_URL');
@@ -16,9 +22,9 @@ const AUTH_SERVICE_URL = requireEnv('AUTH_SERVICE_URL');
 const FRONTEND_ORIGIN = requireEnv('FRONTEND_ORIGIN');
 const AI_SERVICE_WS_URL = process.env.AI_SERVICE_WS_URL || 'ws://localhost:8000/asr';
 const useHttps = process.env.AUTH_USE_HTTPS === 'true';
-const MEETING_QA_CACHE_TTL_SECONDS = 300;
-const MEETING_QA_CACHE_PREFIX = 'meeting:qa:';
-const MEETING_QA_MAX_SPEAKERS = 4;
+// Only skip upstream TLS verification when explicitly opted in (dev with
+// self-signed certs). In prod this stays false so upstream certs are verified.
+const ALLOW_SELF_SIGNED = process.env.GATEWAY_ALLOW_SELF_SIGNED === 'true';
 
 const meetingCacheClient = getRedisClient({
   cacheKey: 'gateway',
@@ -108,7 +114,7 @@ const verifySocketUser = ({ bearerToken, cookieHeader }) =>
       targetUrl,
       {
         method: 'POST',
-        rejectUnauthorized: false,
+        rejectUnauthorized: !ALLOW_SELF_SIGNED,
         headers: {
           Authorization: bearerToken ? `Bearer ${bearerToken}` : '',
           Cookie: cookieHeader,
@@ -153,7 +159,7 @@ const ensureMeetingOwnership = ({ meetingId, userId, authToken }) =>
       targetUrl,
       {
         method: 'GET',
-        rejectUnauthorized: false,
+        rejectUnauthorized: !ALLOW_SELF_SIGNED,
         headers: {
           Accept: 'application/json',
           Authorization: authToken ? `Bearer ${authToken}` : '',
@@ -339,7 +345,7 @@ const fetchMeetingMetadata = ({ meetingId, userId, authToken }) =>
       targetUrl,
       {
         method: 'GET',
-        rejectUnauthorized: false,
+        rejectUnauthorized: !ALLOW_SELF_SIGNED,
         headers: {
           Accept: 'application/json',
           Authorization: authToken ? `Bearer ${authToken}` : '',
@@ -383,7 +389,7 @@ const persistMeetingSpeakers = ({ meetingId, userId, authToken, speakers }) =>
       targetUrl,
       {
         method: 'PATCH',
-        rejectUnauthorized: false,
+        rejectUnauthorized: !ALLOW_SELF_SIGNED,
         headers: {
           'Content-Type': 'application/json',
           'Content-Length': Buffer.byteLength(body),
@@ -547,7 +553,7 @@ const proxyAuth = (path, req, res, extraHeaders = {}) => {
     targetUrl,
     {
       method: req.method,
-      rejectUnauthorized: false,
+      rejectUnauthorized: !ALLOW_SELF_SIGNED,
       headers,
     },
     (proxyRes) => {
@@ -619,7 +625,7 @@ const verifyAccess = (req, res, next) => {
       refreshUrl,
       {
         method: 'POST',
-        rejectUnauthorized: false,
+        rejectUnauthorized: !ALLOW_SELF_SIGNED,
         headers: {
           Cookie: req.headers.cookie || '',
         },
@@ -666,7 +672,7 @@ const verifyAccess = (req, res, next) => {
     targetUrl,
     {
       method: 'POST',
-      rejectUnauthorized: false,
+      rejectUnauthorized: !ALLOW_SELF_SIGNED,
       headers: (() => {
         const h = { ...req.headers };
         delete h.host;
@@ -750,7 +756,7 @@ const proxyMeetingService = (method, path, req, res) => {
 
   const proxyReq = client.request(
     targetUrl,
-    { method, headers, rejectUnauthorized: false },
+    { method, headers, rejectUnauthorized: !ALLOW_SELF_SIGNED },
     (proxyRes) => {
         const upstreamType = String(
         proxyRes.headers['content-type'] || 'application/json',
@@ -861,7 +867,7 @@ app.get('/calendar/status', (req, res) => {
     targetUrl,
     {
       method: 'GET',
-      rejectUnauthorized: false,
+      rejectUnauthorized: !ALLOW_SELF_SIGNED,
       headers: {
         Accept: 'application/json',
         'x-user-id': req.authUser?.id ? String(req.authUser.id) : '',
@@ -900,7 +906,7 @@ app.get('/calendar/events', (req, res) => {
     targetUrl,
     {
       method: 'GET',
-      rejectUnauthorized: false,
+      rejectUnauthorized: !ALLOW_SELF_SIGNED,
       headers: {
         Accept: 'application/json',
         'x-user-id': req.authUser?.id ? String(req.authUser.id) : '',
@@ -938,7 +944,7 @@ app.post('/profile', (req, res) => {
     targetUrl,
     {
       method: 'POST',
-      rejectUnauthorized: false,
+      rejectUnauthorized: !ALLOW_SELF_SIGNED,
       headers: {
         'Content-Type': 'application/json',
         'Content-Length': Buffer.byteLength(body),
@@ -1349,3 +1355,5 @@ server.listen(PORT, () => {
   // eslint-disable-next-line no-console
   console.log(`${protocol} Gateway listening on ${PORT} (hosted on ${os.hostname()})`);
 });
+
+installShutdown(server, { redis: meetingCacheClient });

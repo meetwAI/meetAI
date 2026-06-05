@@ -3,7 +3,9 @@ const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const session = require('express-session');
 const passport = require('passport');
-const { requireEnv, requireNumberEnv } = require('../config/env');
+const { requireEnv, requireNumberEnv } = require('@meetai/shared/env');
+const { pool } = require('@meetai/shared/db');
+const { installShutdown } = require('@meetai/shared/shutdown');
 const authRoutes = require('./routes/auth');
 const fs = require('fs');
 const https = require('https');
@@ -13,7 +15,6 @@ const PORT = requireNumberEnv('AUTH_PORT');
 const FRONTEND_ORIGIN = requireEnv('FRONTEND_ORIGIN');
 const SESSION_SECRET = requireEnv('SESSION_SECRET')
 const useHttps = process.env.AUTH_USE_HTTPS === 'true';
-const akram = process.env.auth_dev_mode === 'true';
 const app = express();
 app.use(
   cors({
@@ -45,8 +46,9 @@ app.get('/health', (_req, res) => {
 
 app.use('/', authRoutes);
 
+let server;
 if (useHttps) {
-  https
+  server = https
     .createServer(
       {
         key: fs.readFileSync('localhost-key.pem'),
@@ -58,7 +60,9 @@ if (useHttps) {
       console.log(`HTTPS Auth service on https://localhost:${PORT} (hosted on ${os.hostname()})`);
     });
 } else {
-  app.listen(PORT, () => {
+  server = app.listen(PORT, () => {
     console.log(`HTTP Auth service on http://localhost:${PORT} (hosted on ${os.hostname()})`);
   });
 }
+
+installShutdown(server, { pool });

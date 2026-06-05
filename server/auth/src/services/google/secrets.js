@@ -1,5 +1,5 @@
 const crypto = require('crypto');
-const { requireEnv } = require('../../config/env');
+const { requireEnv } = require('@meetai/shared/env');
 
 const normalizeText = (value) => String(value || '').trim();
 

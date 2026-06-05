@@ -1,5 +1,5 @@
 const { Pool } = require('pg');
-const { requireEnv } = require('../config/env');
+const { requireEnv } = require('./env');
 
 const connectionString = requireEnv('DATABASE_URL');
 

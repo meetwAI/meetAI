@@ -1,22 +1,11 @@
 {
+  "name": "@meetai/server",
+  "version": "0.0.0",
+  "private": true,
   "scripts": {
-    "start": "node meeting-service/index.js",
-    "start:gateway": "node gateway/app.js",
-    "start:auth": "node auth-service/server.js",
-    "migrate:google-oauth-security": "node auth-service/scripts/migrateGoogleOauthSecurity.js"
-  },
-  "dependencies": {
-    "cookie-parser": "^1.4.6",
-    "cors": "^2.8.5",
-    "dotenv": "^17.3.1",
-    "express": "^5.2.1",
-    "express-session": "^1.19.0",
-    "jsonwebtoken": "^9.0.2",
-    "passport": "^0.7.0",
-    "passport-google-oauth20": "^2.0.0",
-    "pg": "^8.19.0",
-    "redis": "^5.10.0",
-    "socket.io": "^4.8.1",
-    "ws": "^8.20.0"
+    "start:gateway": "pnpm --filter @meetai/gateway start",
+    "start:auth": "pnpm --filter @meetai/auth start",
+    "start:meetings": "pnpm --filter @meetai/meetings start",
+    "migrate:google-oauth-security": "pnpm --filter @meetai/auth migrate:google-oauth-security"
   }
 }

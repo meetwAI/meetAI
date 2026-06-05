@@ -1,5 +1,5 @@
-const { pool, query } = require('../../db/client');
-const { hashGoogleId, encryptGoogleRefreshToken } = require('../services/googleSecretsService');
+const { pool, query } = require('@meetai/shared/db');
+const { hashGoogleId, encryptGoogleRefreshToken } = require('../src/services/google/secrets');
 
 const columnExists = async (columnName) => {
   const result = await query(
