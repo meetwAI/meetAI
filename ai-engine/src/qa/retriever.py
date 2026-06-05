@@ -311,7 +311,7 @@ class QARetriever:
             self._recent_window_seconds,
             self._chunk_weight,
             self._topic_weight,
-            float(current_duration) if current_duration is not None else 0.0,
+            float(current_duration) if current_duration is not None else 9_999_999.0,
         ]
         next_idx = 8  # next available $N
 
