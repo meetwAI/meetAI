@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     TOPIC_WINDOW_SECONDS: float = Field(default=300.0)
     TOPIC_SIMILARITY_THRESHOLD: float = Field(default=0.85)
     GEMINI_API_KEY: str = Field(default="")
-    GEMINI_MODEL: str = Field(default="gemini-2.5-flash")
+    GEMINI_MODEL: str = Field(default="gemini-3.1-flash-lite")
     MOM_MODEL: str = Field(default="gemma-4-31b")
 
     DATABASE_URL: str = Field(default="postgresql://meetai:meetai_pass@localhost:5433/meetai_dev")
