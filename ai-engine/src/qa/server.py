@@ -348,9 +348,10 @@ async def mom_endpoint(req: MOMRequest) -> dict:
 
     assert _retriever is not None and _streamer is not None
 
+    speaker_map = _normalise_speaker_map(req.speaker_map)
     chunks = await _retriever.retrieve_meeting_chronological(req.meeting_id)
-    if req.speaker_map:
-        chunks = _display_map_chunks(chunks, req.speaker_map)
+    if speaker_map:
+        chunks = _display_map_chunks(chunks, speaker_map)
 
     full_parts: list[str] = []
     stream_failed: str | None = None
