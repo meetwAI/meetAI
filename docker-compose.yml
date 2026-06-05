@@ -150,9 +150,9 @@ services:
 
   ai-gateway:
     build:
-      context: ./ai-engine/src
-      dockerfile: deploy/Dockerfile
-    command: python3 -m src.app.server
+      context: ./ai
+      dockerfile: Dockerfile
+    command: python3 -m aiengine.gateway.service
     environment:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       NUM_WORKERS: 1
@@ -177,9 +177,9 @@ services:
 
   embedder:
     build:
-      context: ./ai-engine/src
-      dockerfile: deploy/Dockerfile
-    command: python3 -m src.embedder
+      context: ./ai
+      dockerfile: Dockerfile
+    command: python3 -m aiengine.embedder
     environment:
       LOG_LEVEL: INFO
       EMBEDDER_PORT: 8200
@@ -210,9 +210,9 @@ services:
 
   ai-worker:
     build:
-      context: ./ai-engine/src
-      dockerfile: deploy/Dockerfile
-    command: python3 -m src.app.worker
+      context: ./ai
+      dockerfile: Dockerfile
+    command: python3 -m aiengine.worker
     environment:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       DATABASE_URL: postgresql://meetai:meetai_pass@postgres:5432/meetai_dev
@@ -233,11 +233,11 @@ services:
 
   qa-service:
     build:
-      context: ./ai-engine/src
-      dockerfile: deploy/Dockerfile
-    command: python3 -m uvicorn src.qa.server:app --host 0.0.0.0 --port 8100
+      context: ./ai
+      dockerfile: Dockerfile
+    command: python3 -m uvicorn aiengine.qa.service:app --host 0.0.0.0 --port 8100
     env_file:
-      - ./ai-engine/src/.env
+      - ./ai/.env
     environment:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       DATABASE_URL: postgresql://meetai:meetai_pass@postgres:5432/meetai_dev
@@ -247,7 +247,7 @@ services:
         condition: service_healthy
       embedder:
         condition: service_healthy
-    gpus: all
+    # No GPU — qa-service only orchestrates HTTP calls (Gemini + embedder).
     healthcheck:
       test:
         [
