@@ -29,3 +29,11 @@ CREATE TABLE meeting_topics (
 );
 
 CREATE INDEX IF NOT EXISTS meeting_topics_meeting_idx ON meeting_topics (meeting_id);
+
+-- Recreate the cosine ANN indexes after the drop/recreate above. pgvector
+-- indexes are tied to the column's dimension, so they must be rebuilt on the
+-- resized 384-d columns. Mirrors 09_*.sql.
+CREATE INDEX IF NOT EXISTS meeting_chunks_embedding_ivfflat
+    ON meeting_chunks USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+CREATE INDEX IF NOT EXISTS meeting_topics_embedding_ivfflat
+    ON meeting_topics USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);

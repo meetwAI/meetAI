@@ -19,12 +19,13 @@ BEGIN
 
   SELECT id INTO admin_id FROM users WHERE username = 'admin' LIMIT 1;
 
-  -- Seed admin password into auth_providers
-  -- Default password is 'admin123'
-  INSERT INTO auth_providers (user_id, provider, provider_user_id, password_hash)
-  VALUES (admin_id, 'password', admin_id::text, 'scrypt$16384$8$1$I2YIvX09PRmLayMTWYyNjQ$-yGfxtKDkmfaqePKWxNtmLhrQl_5wQYD0J3QWEVj1mOlaoSTKW5Y36Mdsgg9aR2xqKm4biEfS4RvUlNKbLDAwg')
-  ON CONFLICT (user_id, provider) DO UPDATE
-  SET password_hash = EXCLUDED.password_hash;
+  -- NOTE: The 'admin' demo user is created WITHOUT a password credential.
+  -- The previous hardcoded scrypt hash for 'admin123' was removed (it was a
+  -- public, well-known credential — a security risk on any internet-facing
+  -- deploy). To enable password login for a bootstrap admin, run a dedicated
+  -- seed script that prompts for / generates a real password and inserts the
+  -- hash into auth_providers (see scripts/, TODO: seed-admin). This keeps the
+  -- demo meeting data below available while shipping no usable default login.
 
   IF admin_id IS NOT NULL AND NOT EXISTS (
     SELECT 1 FROM meetings m

@@ -29,3 +29,13 @@ CREATE TABLE meeting_topics (
 );
 
 CREATE INDEX IF NOT EXISTS meeting_topics_meeting_idx ON meeting_topics (meeting_id);
+
+-- Approximate-nearest-neighbour indexes for the retriever's cosine search
+-- (the QA fused-score query orders by `embedding <=> query`). Without these
+-- pgvector falls back to a full scan, which does not scale past a few
+-- thousand rows. `lists = 100` suits the expected per-deployment row counts;
+-- run `ANALYZE` after a large backfill so the planner picks the index.
+CREATE INDEX IF NOT EXISTS meeting_chunks_embedding_ivfflat
+    ON meeting_chunks USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+CREATE INDEX IF NOT EXISTS meeting_topics_embedding_ivfflat
+    ON meeting_topics USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
