@@ -288,7 +288,7 @@ async def _stream_answer(req: QARequest) -> AsyncIterator[str]:
     full_parts: list[str] = []
     stream_failed: str | None = None
 
-    async for item in _streamer.stream_answer(req.question, chunks):
+    async for item in _streamer.stream_answer(req.question, chunks, hints=hints):
         if isinstance(item, StreamError):
             stream_failed = item.message
             break

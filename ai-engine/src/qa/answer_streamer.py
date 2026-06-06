@@ -41,7 +41,7 @@ from typing import AsyncIterator, List, Optional
 from google import genai
 from google.genai import types as genai_types
 
-from src.qa.models import RetrievedChunk
+from src.qa.models import ExtractedQuestion, RetrievedChunk
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +106,92 @@ def _format_chunks(chunks: List[RetrievedChunk]) -> str:
     return "\n\n".join(lines)
 
 
+def _format_seconds(total: float) -> str:
+    """
+    Convert a raw second count into a compact human-readable string.
+
+    Examples::
+
+        _format_seconds(0)     -> "0s"
+        _format_seconds(90)    -> "1m 30s"
+        _format_seconds(3661)  -> "1h 01m 01s"
+    """
+    total = int(total)
+    h, rem = divmod(total, 3600)
+    m, s = divmod(rem, 60)
+    if h:
+        return f"{h}h {m:02d}m {s:02d}s"
+    if m:
+        return f"{m}m {s:02d}s"
+    return f"{s}s"
+
+
+def _build_empty_context_message(hints: ExtractedQuestion) -> str | None:
+    """
+    When the retriever returned no chunks but the question carried specific
+    hints, produce a precise, contextual explanation instead of the generic
+    "I don't have enough information" refusal.
+
+    Returns ``None`` when the hints are empty (no speakers, no time ranges),
+    signalling that the caller should fall back to the generic refusal.
+
+    Cases handled
+    -------------
+    * speakers + time ranges → "<names> did not speak between <start> and <end>"
+    * speakers only          → "<names> did not speak at all in this meeting"
+    * time ranges only       → "<start>–<end> appears to be silence / no speech"
+    """
+    has_speakers = bool(hints.speakers)
+    has_times = bool(hints.time_ranges)
+
+    if not has_speakers and not has_times:
+        return None
+
+    # --- helpers -------------------------------------------------------------
+    def _speaker_str() -> str:
+        names = [s.title() for s in hints.speakers]
+        if len(names) == 1:
+            return names[0]
+        return ", ".join(names[:-1]) + f" and {names[-1]}"
+
+    def _range_str(tr) -> str:
+        if tr.start is not None and tr.end is not None:
+            return f"{_format_seconds(tr.start)} – {_format_seconds(tr.end)}"
+        if tr.start is not None:
+            return f"after {_format_seconds(tr.start)}"
+        if tr.end is not None:
+            return f"before {_format_seconds(tr.end)}"
+        return "the requested period"
+
+    # --- build message -------------------------------------------------------
+    if has_speakers and has_times:
+        speaker_part = _speaker_str()
+        range_parts = ", ".join(_range_str(tr) for tr in hints.time_ranges)
+        plural = "that period" if len(hints.time_ranges) == 1 else "those periods"
+        return (
+            f"There is no record of {speaker_part} speaking during "
+            f"{range_parts} in this meeting — "
+            f"{speaker_part} appears to have been silent for {plural}."
+        )
+
+    if has_speakers:
+        speaker_part = _speaker_str()
+        verb = "does" if len(hints.speakers) == 1 else "do"
+        return (
+            f"There is no record of {speaker_part} speaking anywhere in "
+            f"this meeting's transcript — {speaker_part} {verb} not appear "
+            f"to have contributed during the recorded session."
+        )
+
+    # has_times only
+    range_parts = ", ".join(_range_str(tr) for tr in hints.time_ranges)
+    plural = "that window" if len(hints.time_ranges) == 1 else "those windows"
+    return (
+        f"No speech was found between {range_parts} in this meeting — "
+        f"{plural} appears to be silence or was not captured in the transcript."
+    )
+
+
 class AnswerStreamer:
     """
     Wraps the Gemini client used for QA call #2. One instance per QA service.
@@ -128,6 +214,7 @@ class AnswerStreamer:
         self,
         question: str,
         chunks: List[RetrievedChunk],
+        hints: Optional[ExtractedQuestion] = None,
     ) -> AsyncIterator[str | StreamError]:
         """
         Yield text deltas as Gemini produces them.
@@ -137,8 +224,11 @@ class AnswerStreamer:
               yielded string gives the full answer.
             - ``StreamError`` — once, on failure, then the iterator ends.
 
-        For the "no context" case there is no Gemini call: yield the fixed
-        refusal once and return.
+        For the "no context" case there is no Gemini call:
+        - If ``hints`` carries speaker or time-range information we emit a
+          precise, contextual message (e.g. "Alice did not speak between
+          2m 00s – 5m 00s") instead of the generic refusal.
+        - Otherwise fall back to the generic refusal string.
         """
         text = (question or "").strip()
         if not text:
@@ -147,8 +237,14 @@ class AnswerStreamer:
             return
 
         if not chunks:
-            yield self.REFUSAL_NO_CONTEXT
+            # Try to produce a specific, contextual message before falling back
+            # to the generic refusal. No Gemini call in either branch.
+            contextual = (
+                _build_empty_context_message(hints) if hints is not None else None
+            )
+            yield contextual if contextual is not None else self.REFUSAL_NO_CONTEXT
             return
+        
 
         prompt = (
             f"{_PROMPT_INSTRUCTIONS}\n\n"
