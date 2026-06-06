@@ -62,7 +62,7 @@ Three kinds of hints, all optional:
    - Only return a name that is NOT in the known list if you are certain the
      user is referring to someone genuinely absent from the meeting.
    - If no KNOWN SPEAKERS list is provided, fall back to returning the name
-     exactly as the user wrote it, lowercased and trimmed.
+     exactly as the user wrote it, lowercased and trimmed and in English.
    - If the user did not name anyone specific, return [].
    - Examples (assuming known speakers: akram, mario, john):
        "what did akramm say?"   -> ["akram"]
