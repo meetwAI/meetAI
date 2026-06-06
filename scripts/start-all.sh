@@ -8,8 +8,10 @@ cd "$REPO_ROOT"
 
 TIMEOUT=${1:-180}
 
+COMPOSE_FILE="infra/docker/docker-compose.yml"
+
 echo "Bringing up containers (build if needed)..."
-docker compose up --build -d
+docker compose -f "$COMPOSE_FILE" up --build -d
 
 # auth-service listens on HTTPS by default (see compose: AUTH_USE_HTTPS=true).
 # Mirror that here so curl picks the right scheme; `-k` skips localhost cert

@@ -5,7 +5,7 @@
 From the repository root:
 
 ```bash
-docker compose up --build
+docker compose -f infra/docker/docker-compose.yml up --build
 ```
 
 If you want a single command that builds, starts and waits for services to be ready (recommended for other users), run the appropriate helper:
@@ -38,5 +38,5 @@ AI realtime service source is located at `ai/aiengine/`.
 Stop all services:
 
 ```bash
-docker compose down
+docker compose -f infra/docker/docker-compose.yml down
 ```

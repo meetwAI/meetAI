@@ -68,10 +68,10 @@ Logs are written to `.run/` by default (`gateway.log`, `worker_*.log`).
 
 ## Docker compose
 
-From `src/deploy/`:
+The AI services are part of the unified stack. From the repo root:
 
 ```bash
-docker compose up --build
+docker compose -f infra/docker/docker-compose.yml up --build
 ```
 
 This starts:

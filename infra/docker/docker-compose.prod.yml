@@ -1,0 +1,26 @@
+# Production overlay for the web client.
+#
+#   docker compose -f infra/docker/docker-compose.yml \
+#                  -f infra/docker/docker-compose.prod.yml up --build -d web
+#
+# This swaps the web build from the Vite dev server (Dockerfile.dev) to the
+# static nginx bundle (Dockerfile) and publishes :80.
+#
+# LIMITATION: compose MERGES list-valued keys across files, so the base `web`
+# service's source bind-mount (../../client/web:/app) and the anonymous
+# /app/node_modules volume cannot be removed by this overlay — they would
+# shadow nginx's html root. Until the base is refactored to keep dev-only
+# mounts out of the shared definition, run the prod web image standalone:
+#
+#   docker build -f client/web/Dockerfile -t meetai-web:prod client/web
+#   docker run --rm -p 80:80 meetai-web:prod
+#
+# The override below is kept as the intended shape for when that refactor lands.
+
+services:
+  web:
+    build:
+      dockerfile: Dockerfile
+    command: ["nginx", "-g", "daemon off;"]
+    ports:
+      - "80:80"

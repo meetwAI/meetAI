@@ -7,8 +7,10 @@ param(
 # (it lives in scripts/, repo root is one level up).
 Set-Location (Join-Path $PSScriptRoot '..')
 
+$ComposeFile = 'infra/docker/docker-compose.yml'
+
 Write-Host 'Bringing up containers (build if needed)...'
-docker.exe compose up --build -d
+docker.exe compose -f $ComposeFile up --build -d
 
 # auth-service listens on HTTPS by default (see compose: AUTH_USE_HTTPS=true).
 # Mirror that here, and skip cert validation for the self-signed localhost pair.

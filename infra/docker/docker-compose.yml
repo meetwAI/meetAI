@@ -1,3 +1,14 @@
+# Dev stack. Paths are relative to this file (infra/docker/), so the repo root
+# is ../../ . Invoke from the repo root with:
+#
+#   docker compose -f infra/docker/docker-compose.yml up --build
+#
+# (scripts/start-all.{sh,ps1} do this for you.)
+#
+# Secrets/overrides come from a .env next to this file or via --env-file:
+#   POSTGRES_PASSWORD, REDIS_URL, AUTH_USE_HTTPS, FRONTEND_ORIGIN,
+#   GATEWAY_ALLOW_SELF_SIGNED, VITE_AUTH_URL. See ../../.env.example.
+
 services:
   redis:
     image: redis:7-alpine
@@ -13,20 +24,21 @@ services:
 
   auth-service:
     build:
-      context: ./server
-      dockerfile: Dockerfile
-    command: node --inspect=0.0.0.0:9229 auth-service/server.js
+      # Context is the pnpm workspace root; the Dockerfile lives in the package.
+      context: ../../server
+      dockerfile: auth/Dockerfile
+    command: node --inspect=0.0.0.0:9229 src/server.js
     env_file:
-      - ./server/.env
+      - ../../server/.env
     environment:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
-      DATABASE_URL: postgresql://meetai:meetai_pass@postgres:5432/meetai_dev
+      DATABASE_URL: postgresql://meetai:${POSTGRES_PASSWORD:-meetai_pass}@postgres:5432/meetai_dev
       # Keep in sync with gateway's AUTH_SERVICE_URL protocol.
       # Default to true because gateway uses https://auth-service:4020.
       AUTH_USE_HTTPS: ${AUTH_USE_HTTPS:-true}
     volumes:
-      - ./localhost.pem:/app/localhost.pem:ro
-      - ./localhost-key.pem:/app/localhost-key.pem:ro
+      - ../../localhost.pem:/workspace/auth/localhost.pem:ro
+      - ../../localhost-key.pem:/workspace/auth/localhost-key.pem:ro
     ports:
       - "4020:4020"
       - "9229:9229"
@@ -50,25 +62,25 @@ services:
     develop:
       watch:
         - action: sync+restart
-          path: ./server
-          target: /app
+          path: ../../server/auth
+          target: /workspace/auth
           ignore:
             - node_modules/
-            - db/postgres/
         - action: rebuild
-          path: ./server/package.json
+          path: ../../server/auth/package.json
     restart: unless-stopped
 
   meeting-service:
     build:
-      context: ./server
-      dockerfile: Dockerfile
-    command: node meeting-service/index.js
+      context: ../../server
+      dockerfile: meetings/Dockerfile
+    command: node src/server.js
     env_file:
-      - ./server/.env
+      - ../../server/.env
     environment:
-      DATABASE_URL: postgresql://meetai:meetai_pass@postgres:5432/meetai_dev
+      DATABASE_URL: postgresql://meetai:${POSTGRES_PASSWORD:-meetai_pass}@postgres:5432/meetai_dev
       QA_SERVICE_URL: http://qa-service:8100
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-https://localhost:5173}
     ports:
       - "4001:4001"
     healthcheck:
@@ -85,13 +97,12 @@ services:
     develop:
       watch:
         - action: sync+restart
-          path: ./server
-          target: /app
+          path: ../../server/meetings
+          target: /workspace/meetings
           ignore:
             - node_modules/
-            - db/postgres/
         - action: rebuild
-          path: ./server/package.json
+          path: ../../server/meetings/package.json
     depends_on:
       postgres:
         condition: service_healthy
@@ -101,21 +112,24 @@ services:
 
   gateway:
     build:
-      context: ./server
-      dockerfile: Dockerfile
-    command: node gateway/app.js
+      context: ../../server
+      dockerfile: gateway/Dockerfile
+    command: node src/app.js
     env_file:
-      - ./server/.env
+      - ../../server/.env
     environment:
       AUTH_SERVICE_URL: https://auth-service:4020
       MEETING_SERVICE_URL: http://meeting-service:4001
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       AI_SERVICE_WS_URL: ws://ai-gateway:8000/asr
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-https://localhost:5173}
+      # Dev talks to auth-service over its self-signed cert; allow it here only.
+      GATEWAY_ALLOW_SELF_SIGNED: ${GATEWAY_ALLOW_SELF_SIGNED:-true}
     ports:
       - "4010:4010"
     volumes:
-      - ./localhost.pem:/app/localhost.pem:ro
-      - ./localhost-key.pem:/app/localhost-key.pem:ro
+      - ../../localhost.pem:/workspace/gateway/localhost.pem:ro
+      - ../../localhost-key.pem:/workspace/gateway/localhost-key.pem:ro
     depends_on:
       redis:
         condition: service_healthy
@@ -139,18 +153,17 @@ services:
     develop:
       watch:
         - action: sync+restart
-          path: ./server
-          target: /app
+          path: ../../server/gateway
+          target: /workspace/gateway
           ignore:
             - node_modules/
-            - db/postgres/
         - action: rebuild
-          path: ./server/package.json
+          path: ../../server/gateway/package.json
     restart: unless-stopped
 
   ai-gateway:
     build:
-      context: ./ai
+      context: ../../ai
       dockerfile: Dockerfile
     command: python3 -m aiengine.gateway.service
     environment:
@@ -177,7 +190,7 @@ services:
 
   embedder:
     build:
-      context: ./ai
+      context: ../../ai
       dockerfile: Dockerfile
     command: python3 -m aiengine.embedder
     environment:
@@ -210,12 +223,12 @@ services:
 
   ai-worker:
     build:
-      context: ./ai
+      context: ../../ai
       dockerfile: Dockerfile
     command: python3 -m aiengine.worker
     environment:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
-      DATABASE_URL: postgresql://meetai:meetai_pass@postgres:5432/meetai_dev
+      DATABASE_URL: postgresql://meetai:${POSTGRES_PASSWORD:-meetai_pass}@postgres:5432/meetai_dev
       EMBED_SERVICE_URL: http://embedder:8200
       NUM_WORKERS: 1
       WORKER_ID: 0
@@ -233,14 +246,14 @@ services:
 
   qa-service:
     build:
-      context: ./ai
+      context: ../../ai
       dockerfile: Dockerfile
     command: python3 -m uvicorn aiengine.qa.service:app --host 0.0.0.0 --port 8100
     env_file:
-      - ./ai/.env
+      - ../../ai/.env
     environment:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
-      DATABASE_URL: postgresql://meetai:meetai_pass@postgres:5432/meetai_dev
+      DATABASE_URL: postgresql://meetai:${POSTGRES_PASSWORD:-meetai_pass}@postgres:5432/meetai_dev
       EMBED_SERVICE_URL: http://embedder:8200
     depends_on:
       postgres:
@@ -263,9 +276,9 @@ services:
 
   web:
     build:
-      context: ./client/web
+      context: ../../client/web
       dockerfile: Dockerfile.dev
-    command: npm run dev -- --host 0.0.0.0 --port 5173
+    command: pnpm run dev -- --host 0.0.0.0 --port 5173
     environment:
       CHOKIDAR_USEPOLLING: "true"
       HOST: 0.0.0.0
@@ -278,35 +291,35 @@ services:
     develop:
       watch:
         - action: sync
-          path: ./client/web/src
+          path: ../../client/web/src
           target: /app/src
         - action: sync
-          path: ./client/web/public
+          path: ../../client/web/public
           target: /app/public
         - action: rebuild
-          path: ./client/web/package.json
+          path: ../../client/web/package.json
     depends_on:
       gateway:
         condition: service_healthy
     volumes:
-      - ./client/web:/app
+      - ../../client/web:/app
       - /app/node_modules
-      - ./localhost.pem:/app/localhost.pem:ro
-      - ./localhost-key.pem:/app/localhost-key.pem:ro
+      - ../../localhost.pem:/app/localhost.pem:ro
+      - ../../localhost-key.pem:/app/localhost-key.pem:ro
     restart: unless-stopped
 
   postgres:
     build:
-      context: ./infra/db/postgres
+      context: ../../infra/db/postgres
       dockerfile: Dockerfile
     container_name: meetai-postgres
     environment:
       POSTGRES_USER: meetai
-      POSTGRES_PASSWORD: meetai_pass
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-meetai_pass}
       POSTGRES_DB: meetai_dev
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./infra/db/init:/docker-entrypoint-initdb.d:ro
+      - ../../infra/db/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test:
         ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]

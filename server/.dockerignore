@@ -1,3 +1,18 @@
-node_modules
+# Keep the build context lean and free of host-only / secret files.
+# pnpm reinstalls inside the image, so host node_modules must never be copied
+# (its symlinks point at host paths and would break the image).
+**/node_modules
 npm-debug.log
 .DS_Store
+
+**/.env
+**/.env.*
+*.log
+
+# Certs are mounted at runtime via compose, never baked into the image.
+*.pem
+*.key
+*.crt
+
+.git
+.gitignore

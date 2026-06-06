@@ -1,17 +1,17 @@
-# Use Node.js for development
+# Development image for the web client (Vite dev server with hot reload).
+# Compose bind-mounts the source over /app and keeps /app/node_modules from the
+# image, so this install just needs to populate node_modules once.
 FROM node:20-alpine
+RUN corepack enable
 
 WORKDIR /app
 
-# Install dependencies
-COPY package.json package-lock.json* ./
-RUN npm install
+# This project uses pnpm (pnpm-lock.yaml). Manifest-first for layer caching.
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
 
-# Copy the rest of the app
 COPY . .
 
-# Expose Vite dev server port
 EXPOSE 5173
 
-# Default command
-CMD ["npm", "run", "dev"]
+CMD ["pnpm", "run", "dev"]
