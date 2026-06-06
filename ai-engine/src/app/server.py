@@ -30,12 +30,17 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Standalone ASR Gateway", lifespan=lifespan)
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+if STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 @app.get("/")
 async def index():
-    return FileResponse(STATIC_DIR / "index.html")
+    index_file = STATIC_DIR / "index.html"
+    if index_file.exists():
+        return FileResponse(index_file)
+    return JSONResponse({"ok": True, "message": "Standalone ASR Gateway is running"})
 
 
 @app.get("/health")

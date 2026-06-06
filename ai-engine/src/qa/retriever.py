@@ -276,6 +276,19 @@ class QARetriever:
         if not text:
             return []
 
+        # Log retrieval invocation with basic metadata
+        try:
+            hints_dump = hints.model_dump() if hasattr(hints, "model_dump") else getattr(hints, "dict", lambda: {})()
+        except Exception:
+            hints_dump = "<unserializable>"
+        logger.info(
+            "QARetriever.retrieve called: meeting_id=%s question_len=%s hints=%s current_duration=%s",
+            meeting_id,
+            len(text),
+            hints_dump,
+            current_duration,
+        )
+
         hints = hints or ExtractedQuestion()
         speakers = _normalise_speakers(hints.speakers)
         if hints.metadata_only:
@@ -292,6 +305,11 @@ class QARetriever:
         except TimeoutError:
             logger.error("QA pipeline failed: Embedding microservice timed out.")
             raise RuntimeError("Embedding service unavailable")
+        logger.debug("Embedding produced %d vectors; first-vector-dim=%d", len(vectors), len(vectors[0]) if vectors else 0)
+        try:
+            logger.debug("Embedding preview (first 5 dims): %s", vectors[0][:5] if vectors and len(vectors[0])>=5 else vectors[0] if vectors else None)
+        except Exception:
+            pass
         if not vectors or len(vectors[0]) != EMBED_DIM:
             raise RuntimeError(
                 f"Question embedding had unexpected shape: "
@@ -354,6 +372,8 @@ class QARetriever:
             chunk_limit_placeholder=f"${chunk_limit_idx}",
         )
 
+        logger.debug("SQL preview: %s", sql[:1000])
+        logger.debug("SQL params count=%d", len(params))
         try:
             async with self._pool.acquire() as conn:
                 rows = await conn.fetch(sql, *params)
@@ -366,6 +386,12 @@ class QARetriever:
                 len(hints.time_ranges),
             )
             raise
+
+        logger.info("SQL returned %d rows for meeting_id=%s", len(rows), meeting_id)
+        try:
+            logger.debug("SQL rows preview: %s", [dict(r) for r in rows[:5]])
+        except Exception:
+            pass
 
         return _rows_to_chunks(rows)
 
@@ -466,4 +492,11 @@ def _rows_to_chunks(rows) -> List[RetrievedChunk]:
                 fused_score=float(r["fused_score"]),
             )
         )
+    try:
+        logger.info("Mapped %d rows into RetrievedChunk objects", len(results))
+        logger.debug("Mapped chunk ids preview: %s", [c.chunk_id for c in results[:10]])
+    except Exception:
+        pass
     return results
+
+

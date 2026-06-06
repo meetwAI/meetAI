@@ -61,6 +61,12 @@ from src.qa.retriever import QARetriever
 
 logger = logging.getLogger(__name__)
 
+# Ensure console logging is enabled during development if not configured.
+if not logging.getLogger().handlers:
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
 app = FastAPI(title="meetAI QA service", version="1.0")
 
 # Module-level singletons populated by the startup hook. We avoid passing
@@ -247,12 +253,38 @@ async def _stream_answer(req: QARequest) -> AsyncIterator[str]:
     """
     assert _extractor is not None and _retriever is not None and _streamer is not None
 
+    # Log the incoming request at the start of the pipeline.
+    try:
+        req_dump = req.model_dump()
+    except Exception:
+        try:
+            req_dump = req.dict()
+        except Exception:
+            req_dump = {
+                "meeting_id": req.meeting_id,
+                "user_id": req.user_id,
+                "question_len": len(req.question or ""),
+            }
+    logger.info(
+        "QA pipeline start: meeting_id=%s user_id=%s question_len=%s",
+        req.meeting_id,
+        req.user_id,
+        len(req.question or ""),
+    )
+    logger.debug("QA request payload: %s", {k: (v if k != "question" else (str(v)[:1000] + ("..." if len(str(v))>1000 else ""))) for k,v in req_dump.items()})
+
     # 1) Hints — never raises; on Gemini failure returns empty lists.
     speaker_map = _normalise_speaker_map(req.speaker_map)
     hints = await _extractor.extract(
         req.question,
         current_duration=req.current_duration,
     )
+    # Log extractor output (hints) for observability
+    try:
+        hints_dump = hints.model_dump()
+    except Exception:
+        hints_dump = getattr(hints, "dict", lambda: {})()
+    logger.info("Extractor hints: %s", hints_dump)
     retrieval_hints = hints.model_copy(
         update={
             "speakers": _reverse_map_hint_speakers(hints.speakers, speaker_map)
@@ -261,6 +293,12 @@ async def _stream_answer(req: QARequest) -> AsyncIterator[str]:
 
     # 2) Retrieve — raises on DB error. Catch and turn into SSE error event.
     try:
+        logger.debug(
+            "Calling retriever.retrieve: meeting_id=%s question_len=%s hints=%s",
+            req.meeting_id,
+            len(req.question or ""),
+            retrieval_hints.model_dump() if hasattr(retrieval_hints, "model_dump") else getattr(retrieval_hints, "dict", lambda: {})(),
+        )
         chunks = await _retriever.retrieve(
             meeting_id=req.meeting_id,
             question=req.question,
@@ -268,6 +306,11 @@ async def _stream_answer(req: QARequest) -> AsyncIterator[str]:
             current_duration=req.current_duration,
         )
         chunks = _display_map_chunks(chunks, speaker_map)
+        logger.info("Retriever returned %d chunks", len(chunks))
+        logger.debug("Top retrieved chunks: %s", [
+            {"chunk_id": c.chunk_id, "topic": c.topic, "fused_score": round(c.fused_score,4)}
+            for c in chunks[:10]
+        ])
     except Exception as exc:
         logger.exception(
             "QA retrieve failed: meeting_id=%s user_id=%s",
@@ -278,10 +321,10 @@ async def _stream_answer(req: QARequest) -> AsyncIterator[str]:
         return
 
     # 3) Emit meta before any delta so the UI can render the citations panel.
-    yield _sse_event(
-        "meta",
-        _meta_payload(chunks, hints.speakers, hints.time_ranges, hints.metadata_only),
-    )
+    meta_payload = _meta_payload(chunks, hints.speakers, hints.time_ranges, hints.metadata_only)
+    logger.info("Emitting meta event with %d chunks", len(chunks))
+    logger.debug("Meta payload preview: %s", {"chunks_count": len(meta_payload.get("chunks",[])), "hints": meta_payload.get("hints")})
+    yield _sse_event("meta", meta_payload)
 
     # 4) Stream the answer. Concatenate as we go so we can emit the canonical
     #    text on ``done`` for downstream persistence.
@@ -291,7 +334,10 @@ async def _stream_answer(req: QARequest) -> AsyncIterator[str]:
     async for item in _streamer.stream_answer(req.question, chunks, hints=hints):
         if isinstance(item, StreamError):
             stream_failed = item.message
+            logger.error("Answer stream failed mid-stream: %s", stream_failed)
             break
+        # Log each delta for maximum observability (debug level due to verbosity)
+        logger.debug("Streaming delta chunk: %s", item)
         full_parts.append(item)
         yield _sse_event("delta", {"text": item})
 
@@ -300,6 +346,8 @@ async def _stream_answer(req: QARequest) -> AsyncIterator[str]:
         return
 
     full_answer = "".join(full_parts).strip()
+    logger.info("Streaming complete: answer_length=%d parts=%d", len(full_answer), len(full_parts))
+    logger.debug("Full answer preview: %s", full_answer[:2000])
     yield _sse_event("done", {"answer": full_answer})
 
 
@@ -310,6 +358,14 @@ async def qa_endpoint(req: QARequest) -> StreamingResponse:
     add the "non-empty question" guard here because Pydantic doesn't reject
     blank strings by default.
     """
+    # Log incoming QA request payload
+    try:
+        req_dump = req.model_dump()
+    except Exception:
+        req_dump = getattr(req, "dict", lambda: {})()
+    logger.info("POST /qa received: meeting_id=%s user_id=%s question_len=%s", req.meeting_id, req.user_id, len(req.question or ""))
+    logger.debug("POST /qa payload: %s", {k: (v if k != "question" else (str(v)[:1000] + ("..." if len(str(v))>1000 else ""))) for k,v in req_dump.items()})
+
     if _db_pool is None:
         # Startup hasn't completed (or shutdown ran). Treat as 503.
         raise HTTPException(status_code=503, detail="QA service not ready")
@@ -339,6 +395,14 @@ async def mom_endpoint(req: MOMRequest) -> dict:
     Synchronous JSON endpoint for generating Minutes of Meeting.
     Used internally by the gateway after a session ends.
     """
+    # Log incoming MOM request payload
+    try:
+        req_dump = req.model_dump()
+    except Exception:
+        req_dump = getattr(req, "dict", lambda: {})()
+    logger.info("POST /mom received: meeting_id=%s user_id=%s", req.meeting_id, req.user_id)
+    logger.debug("POST /mom payload: %s", req_dump)
+
     if _db_pool is None:
         raise HTTPException(status_code=503, detail="QA service not ready")
     if req.meeting_id <= 0 or req.user_id <= 0:
