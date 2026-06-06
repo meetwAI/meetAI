@@ -300,8 +300,7 @@ class QARetriever:
         #    service mode does one HTTP round-trip.
 
         try:
-            async with asyncio.timeout(10.0):  # 10-second hard ceiling for embedder service
-                vectors = await embed_texts_async([text])
+            vectors= await asyncio.wait_for(embed_texts_async([text]), timeout=10.0)
         except TimeoutError:
             logger.error("QA pipeline failed: Embedding microservice timed out.")
             raise RuntimeError("Embedding service unavailable")
