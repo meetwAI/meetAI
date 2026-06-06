@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Run from the repo root regardless of where the script is invoked from
+# (it lives in scripts/, repo root is one level up).
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+
 TIMEOUT=${1:-180}
 
 echo "Bringing up containers (build if needed)..."

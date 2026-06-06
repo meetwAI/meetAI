@@ -3,6 +3,10 @@ param(
   [int]$TimeoutSeconds = 180
 )
 
+# Run from the repo root regardless of where the script is invoked from
+# (it lives in scripts/, repo root is one level up).
+Set-Location (Join-Path $PSScriptRoot '..')
+
 Write-Host 'Bringing up containers (build if needed)...'
 docker.exe compose up --build -d
 

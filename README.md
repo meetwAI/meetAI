@@ -13,13 +13,13 @@ If you want a single command that builds, starts and waits for services to be re
 PowerShell (Windows):
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\start-all.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\start-all.ps1
 ```
 
 POSIX (macOS / Linux / WSL):
 
 ```bash
-./start-all.sh
+./scripts/start-all.sh
 ```
 
 Services started:
@@ -33,7 +33,7 @@ Services started:
 Redis URL defaults are unified in compose:
 - All services: `${REDIS_URL:-redis://redis:6379/0}`
 
-AI realtime service source is located at `ai-engine/src`.
+AI realtime service source is located at `ai/aiengine/`.
 
 Stop all services:
 
