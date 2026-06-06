@@ -111,6 +111,7 @@ services:
       MEETING_SERVICE_URL: http://meeting-service:4001
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       AI_SERVICE_WS_URL: ws://ai-gateway:8000/asr
+      QA_SERVICE_URL: http://qa-service:8100
     ports:
       - "4010:4010"
     volumes:

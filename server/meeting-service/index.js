@@ -10,7 +10,7 @@ const PORT = requireNumberEnv('PORT');
 // container DNS later when this is moved into compose. Defaults to the
 // Docker-for-Mac host bridge so containerised meeting-service can reach the
 // CHECKPOINT1 process the user runs in a host shell.
-const QA_SERVICE_URL = (process.env.QA_SERVICE_URL || 'http://ai-gateway:8000').replace(/\/+$/, '');
+const QA_SERVICE_URL = (process.env.QA_SERVICE_URL || 'http://ai-gateway:8000').trim().replace(/\/+$/, '');
 const MAX_SPEAKER_COUNT = 4;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

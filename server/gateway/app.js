@@ -19,6 +19,7 @@ const useHttps = process.env.AUTH_USE_HTTPS === 'true';
 const MEETING_QA_CACHE_TTL_SECONDS = 300;
 const MEETING_QA_CACHE_PREFIX = 'meeting:qa:';
 const MEETING_QA_MAX_SPEAKERS = 4;
+const QA_SERVICE_URL = (process.env.QA_SERVICE_URL || 'http://ai-gateway:8000').trim().replace(/\/+$/, '');
 
 const meetingCacheClient = getRedisClient({
   cacheKey: 'gateway',
@@ -559,7 +560,8 @@ const generateAndPersistMOM = async ({ meetingId, userId, authToken }) => {
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: authToken,
+        Authorization: authToken ? `Bearer ${authToken}` : '',
+        'x-user-id': String(userId),
       },
       body: JSON.stringify({ summary: answer }),
     });

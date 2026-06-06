@@ -4,8 +4,8 @@ const dotenv = require('dotenv');
 dotenv.config({ path: path.resolve(__dirname, '..', '.env') });
 
 const requireEnv = (name) => {
-  const value = process.env[name];
-  if (value == null || String(value).trim() === '') {
+  const value = String(process.env[name] || '').trim();
+  if (!value) {
     throw new Error(`[env] Missing required environment variable: ${name}`);
   }
   return value;
