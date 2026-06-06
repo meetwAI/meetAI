@@ -46,12 +46,30 @@ Three kinds of hints, all optional:
 
 1. speakers
    - List of speaker names or labels referenced by the question.
-   - Use the names exactly as the user wrote them, lowercased and trimmed.
-   - Examples:
-       "what did Alice say about pricing?"  -> ["alice"]
-       "did anyone disagree with Bob or Carol?" -> ["bob", "carol"]
-       "what did we decide about Q3?" -> []
+   - IMPORTANT — when a KNOWN SPEAKERS list is provided below, you MUST
+     resolve every name the user mentions to the closest match in that list.
+     Apply this resolution for ALL of the following cases:
+       a) Typos / extra letters  : "akramm" -> "akram", "maro" -> "mario"
+       b) Missing letters        : "jon" -> "john", "ale" -> "alex"
+       c) Arabic name or transliteration of a known speaker's name:
+            "اكرم" or "أكرم"  -> "akram"
+            "محمد" or "مو"    -> "mohamed" (if that is in the known list)
+            "ماريو"           -> "mario"
+       d) Common nickname / short form: "mike" -> "michael" if "michael" is
+            in the known list and "mike" is not.
+   - Always return the KNOWN SPEAKERS spelling (lowercased), not whatever
+     the user typed, when a confident match exists.
+   - Only return a name that is NOT in the known list if you are certain the
+     user is referring to someone genuinely absent from the meeting.
+   - If no KNOWN SPEAKERS list is provided, fall back to returning the name
+     exactly as the user wrote it, lowercased and trimmed.
    - If the user did not name anyone specific, return [].
+   - Examples (assuming known speakers: akram, mario, john):
+       "what did akramm say?"   -> ["akram"]
+       "anything from maro?"    -> ["mario"]
+       "ماذا قال اكرم؟"          -> ["akram"]
+       "what did جون decide?"   -> ["john"]
+       "what did we decide about Q3?" -> []
 
 2. time_ranges
    - List of {start, end} objects in SECONDS from the start of the meeting.
@@ -111,10 +129,23 @@ class QuestionExtractor:
         self._client = genai.Client(api_key=api_key)
 
     async def extract(
-        self, question: str, current_duration: Optional[float] = None
+        self,
+        question: str,
+        current_duration: Optional[float] = None,
+        known_speakers: Optional[list[str]] = None,
     ) -> ExtractedQuestion:
         """
         Parse one user question into ``ExtractedQuestion``.
+
+        Args:
+            question: The raw user question.
+            current_duration: Latest audio timestamp in seconds, used to
+                resolve relative time expressions like "last 10 minutes".
+            known_speakers: Display names of all speakers in this meeting
+                (values from the speaker_map). When provided, the LLM will
+                resolve typos, Arabic transliterations, and nicknames to the
+                canonical name from this list instead of returning whatever
+                the user typed.
 
         Always returns an ``ExtractedQuestion`` — empty lists on any error,
         so the caller never has to handle ``None``. Logs the underlying
@@ -125,9 +156,10 @@ class QuestionExtractor:
             return ExtractedQuestion()
 
         logger.info(
-            "QuestionExtractor.extract called: question_len=%s current_duration=%s",
+            "QuestionExtractor.extract called: question_len=%s current_duration=%s known_speakers=%s",
             len(text),
             current_duration,
+            known_speakers,
         )
 
         duration_text = (
@@ -135,8 +167,16 @@ class QuestionExtractor:
             if current_duration is not None and current_duration >= 0
             else "not provided"
         )
+
+        if known_speakers:
+            speakers_block = ", ".join(known_speakers)
+            known_speakers_section = f"KNOWN SPEAKERS (resolve all user-mentioned names to the closest match here):\n{speakers_block}\n\n"
+        else:
+            known_speakers_section = ""
+
         prompt = (
             f"{_PROMPT_INSTRUCTIONS}\n\n"
+            f"{known_speakers_section}"
             f"CURRENT MEETING DURATION:\n{duration_text}\n\n"
             f"USER QUESTION:\n{text}\n"
         )

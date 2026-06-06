@@ -275,9 +275,11 @@ async def _stream_answer(req: QARequest) -> AsyncIterator[str]:
 
     # 1) Hints — never raises; on Gemini failure returns empty lists.
     speaker_map = _normalise_speaker_map(req.speaker_map)
+    known_display_names = list(speaker_map.values()) if speaker_map else None
     hints = await _extractor.extract(
         req.question,
         current_duration=req.current_duration,
+        known_speakers=known_display_names,
     )
     # Log extractor output (hints) for observability
     try:
