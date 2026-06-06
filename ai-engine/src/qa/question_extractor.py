@@ -59,10 +59,18 @@ Three kinds of hints, all optional:
             in the known list and "mike" is not.
    - Always return the KNOWN SPEAKERS spelling (lowercased), not whatever
      the user typed, when a confident match exists.
-   - Only return a name that is NOT in the known list if you are certain the
-     user is referring to someone genuinely absent from the meeting and return that name in English.
-   - If no KNOWN SPEAKERS list is provided, fall back to returning the name
-     exactly as the user wrote it, lowercased and trimmed.
+   - If the name does NOT match any known speaker (genuinely absent from the
+     meeting), you MUST still return it in English (Latin script):
+       * If the user typed it in Arabic or any non-Latin script, transliterate
+         it to its standard English romanisation before returning it.
+       * NEVER return a name in Arabic, Hebrew, or any other non-Latin script.
+       * NEVER invent or substitute a name that IS in the known list when the
+         user clearly meant someone different.
+       * Examples of the not-in-list case (known speakers: akram, mario):
+           "ماذا قال خالد؟"  -> ["khaled"]   // not in list, transliterated
+           "what did sara say?" -> ["sara"]   // not in list, already English
+   - If no KNOWN SPEAKERS list is provided, apply the same transliteration
+     rule: always return names in English (Latin) script, lowercased.
    - If the user did not name anyone specific, return [].
    - Examples (assuming known speakers: akram, mario, john):
        "what did akramm say?"   -> ["akram"]
