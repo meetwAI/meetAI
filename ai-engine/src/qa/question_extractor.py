@@ -60,9 +60,9 @@ Three kinds of hints, all optional:
    - Always return the KNOWN SPEAKERS spelling (lowercased), not whatever
      the user typed, when a confident match exists.
    - Only return a name that is NOT in the known list if you are certain the
-     user is referring to someone genuinely absent from the meeting.
+     user is referring to someone genuinely absent from the meeting and return that name in English.
    - If no KNOWN SPEAKERS list is provided, fall back to returning the name
-     exactly as the user wrote it, lowercased and trimmed and in English.
+     exactly as the user wrote it, lowercased and trimmed.
    - If the user did not name anyone specific, return [].
    - Examples (assuming known speakers: akram, mario, john):
        "what did akramm say?"   -> ["akram"]
