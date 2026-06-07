@@ -1,0 +1,4 @@
+# ai-gateway: FastAPI WebSocket entry that drives sessions over the Redis
+# broker. Reaches only broker.audio + config.settings — NO ML stack.
+-r base.txt
+redis==5.2.1

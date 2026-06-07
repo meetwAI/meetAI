@@ -1,5 +1,5 @@
 """
-Entrypoint: ``python -m src.embedder``
+Entrypoint: ``python -m aiengine.embedder``
 
 Boots the embedder FastAPI app on EMBEDDER_HOST:EMBEDDER_PORT (defaults to
 0.0.0.0:8200). Single worker on purpose — the embedder singleton lives in this
@@ -18,7 +18,7 @@ def main() -> None:
     # Defensive: this process IS the embedder server. If EMBED_SERVICE_URL is
     # set in our environment, the embeddings module would try to forward every
     # request *to ourselves* and deadlock. Strip it before importing anything
-    # that touches src.infra.embeddings.
+    # that touches aiengine.embedder.embeddings.
     os.environ.pop("EMBED_SERVICE_URL", None)
 
     host = os.getenv("EMBEDDER_HOST", "0.0.0.0")
@@ -26,7 +26,7 @@ def main() -> None:
     log_level = os.getenv("LOG_LEVEL", "INFO").lower()
     logging.basicConfig(level=log_level.upper())
     uvicorn.run(
-        "src.embedder.server:app",
+        "aiengine.embedder.service:app",
         host=host,
         port=port,
         workers=1,

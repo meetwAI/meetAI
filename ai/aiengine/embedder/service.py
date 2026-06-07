@@ -10,7 +10,7 @@ twice would waste >1 GB of RAM and double cold-start time. By moving the model
 behind a tiny HTTP service, every other process becomes a thin client and the
 weights live in exactly one process for the whole host.
 
-The service reuses ``src.infra.embeddings`` unchanged — that module already
+The service reuses ``aiengine.embedder.embeddings`` unchanged — that module already
 implements the thread-safe lazy singleton. We just wrap it in HTTP.
 
 Endpoints

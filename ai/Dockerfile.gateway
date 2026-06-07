@@ -1,0 +1,20 @@
+# Slim image for ai-gateway. It only drives sessions over the Redis broker
+# (reaches broker.audio + config.settings) and imports NO ML libraries, so it
+# skips the CUDA base, ffmpeg, and the entire torch/whisper/nemo stack the other
+# AI services need. Build context is ./ai.
+FROM python:3.11-slim
+
+WORKDIR /workspace
+
+# pip cache mount speeds up rebuilds; ignored on non-BuildKit builders.
+COPY requirements /workspace/requirements
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --upgrade pip \
+    && pip install -r /workspace/requirements/gateway.txt
+
+# Gateway needs the package but not the model weights (no local inference).
+COPY aiengine /workspace/aiengine
+
+ENV PYTHONPATH=/workspace
+
+CMD ["python3", "-m", "aiengine.gateway.service"]

@@ -3,7 +3,7 @@ chunk_store.py
 --------------
 Persists transcription chunks to the `meeting_chunks` Postgres table.
 
-Embeddings are computed by the shared singleton in ``src.infra.embeddings``
+Embeddings are computed by the shared singleton in ``aiengine.embedder.embeddings``
 (the configured embedder model (settings.EMBED_MODEL_REPO)) so the model is loaded only once per worker.
 
 Design decisions

@@ -1,0 +1,14 @@
+# Keep the AI build context lean and free of host-only / secret files.
+__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# Secrets + local config — provided at runtime via compose env_file/environment.
+.env
+.env.*
+
+*.log
+.git

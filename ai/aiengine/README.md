@@ -36,14 +36,14 @@ docker run --rm -p 6379:6379 redis:7-alpine
 
 ```bash
 source .venv/bin/activate
-python -m src.app.worker
+python -m aiengine.worker
 ```
 
 4) Start gateway (new terminal, from project root):
 
 ```bash
 source .venv/bin/activate
-python -m src.app.server
+python -m aiengine.gateway.service
 ```
 
 5) Open UI:

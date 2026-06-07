@@ -1,0 +1,13 @@
+# qa-service: retrieval + answer streaming. Talks to Postgres (asyncpg), Gemini
+# (google-genai), and the embedder over HTTP. It imports embedder.embeddings for
+# EMBED_DIM + the HTTP embed call, and that module imports torch/sentence-
+# transformers at top level, so they're pulled in here too even though qa always
+# uses the HTTP embedder path (it never runs the local model). Trimming that
+# would require making those imports lazy in embeddings.py — deferred.
+-r base.txt
+asyncpg==0.30.0
+google-genai>=0.3.0
+torch==2.7.1
+sentence_transformers
+numpy==1.26.4
+requests==2.32.3

@@ -1,0 +1,8 @@
+# embedder: loads the sentence-transformers model once and serves /embed.
+# Needs the torch + sentence-transformers stack, but none of the ASR/diarization
+# deps (whisper/nemo/onnx) and no DB/Gemini.
+-r base.txt
+torch==2.7.1
+sentence_transformers
+numpy==1.26.4
+requests==2.32.3

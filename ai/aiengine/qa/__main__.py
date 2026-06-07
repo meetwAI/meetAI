@@ -1,5 +1,5 @@
 """
-Entrypoint: ``python -m src.qa``
+Entrypoint: ``python -m aiengine.qa``
 
 Boots the QA FastAPI app on QA_HOST:QA_PORT (defaults to 0.0.0.0:8100).
 
@@ -29,7 +29,7 @@ def main() -> None:
     log_level = os.getenv("LOG_LEVEL", "INFO").lower()
     logging.basicConfig(level=log_level.upper())
     uvicorn.run(
-        "src.qa.server:app",
+        "aiengine.qa.service:app",
         host=host,
         port=port,
         workers=1,

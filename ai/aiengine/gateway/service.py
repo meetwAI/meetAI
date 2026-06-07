@@ -150,5 +150,5 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run(
-        "src.app.server:app", host=settings.HOST, port=settings.PORT, reload=False
+        "aiengine.gateway.service:app", host=settings.HOST, port=settings.PORT, reload=False
     )
