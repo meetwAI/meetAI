@@ -1,17 +1,4 @@
-# ML base image for the AI services that need torch (embedder, qa-service,
-# ai-worker). The gateway does NOT need any of this — it uses Dockerfile.gateway
-# (slim, no CUDA) instead.
-#
-# Which dependency tier to install is selected per service via the REQUIREMENTS
-# build arg, so each image carries only the libs that service actually imports
-# (traced from the package import graph). Build context is ./ai.
-#
-#   embedder  -> --build-arg REQUIREMENTS=requirements/embedder.txt
-#   qa        -> --build-arg REQUIREMENTS=requirements/qa.txt
-#   worker    -> requirements/worker.txt (default; the full ASR/diarization stack)
 FROM nvidia/cuda:12.3.2-runtime-ubuntu22.04
-
-ARG REQUIREMENTS=requirements/worker.txt
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN for file in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do \
@@ -24,15 +11,25 @@ RUN for file in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/so
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace
+# Split requirements: cache base.txt separately from the per-service file.
+# base.txt is shared and changes rarely; the per-service file is bind-mounted
+# so its cache key is just that one file's contents. Changing qa.txt only
+# busts the qa-service layer — embedder/ai-worker keep their cached base +
+# their own pip install layer. Requires BuildKit (same constraint as the
+# pip cache mount in Dockerfile.gateway).
+COPY requirements/base.txt /workspace/requirements/base.txt
+ARG REQUIREMENTS=requirements/embedder.txt
 
-# Copy the whole requirements tree so `-r base.txt` includes resolve. The pip
-# cache mount lets rebuilds reuse already-downloaded wheels instead of
-# re-fetching them; it is a BuildKit feature and is simply ignored on builders
-# without BuildKit, so the build still works everywhere.
-COPY requirements /workspace/requirements
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip3 install --upgrade pip setuptools wheel \
-    && pip3 install -r "/workspace/${REQUIREMENTS}"
+# Bind-mount the per-service file by itself, copy it next to base.txt so its
+# `-r base.txt` line resolves, then pip-install both. Using `--mount=bind` for
+# just this one file (not the whole requirements/ dir) is what gives us the
+# per-service layer caching.
+RUN --mount=type=bind,source=${REQUIREMENTS},target=/tmp/req.txt \
+    --mount=type=cache,target=/root/.cache/pip \
+    cp /tmp/req.txt /workspace/requirements/req.txt \
+    && pip install --upgrade pip \
+    && pip install -r /workspace/requirements/base.txt \
+                    -r /workspace/requirements/req.txt
 
 # Copy the package + weights. Build context is ./ai (the package root).
 COPY aiengine /workspace/aiengine
@@ -41,5 +38,4 @@ COPY weights /workspace/weights
 # Keep /workspace on sys.path so `python -m aiengine.*` resolves the package.
 ENV PYTHONPATH=/workspace
 
-# Overridden per service by the compose `command:`. Default to the worker.
-CMD ["python3", "-m", "aiengine.worker"]
+CMD ["python3", "-m", "aiengine.gateway.service"]
