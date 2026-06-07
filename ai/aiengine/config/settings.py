@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     TOPIC_SIMILARITY_THRESHOLD: float = Field(default=0.85)
     GEMINI_API_KEY: str = Field(default="")
     GEMINI_MODEL: str = Field(default="gemini-2.5-flash")
+    MOM_MODEL: str = Field(default="gemma-4-31b")
 
     DATABASE_URL: str = Field(default="postgresql://meetai:meetai_pass@localhost:5433/meetai_dev")
 
@@ -55,6 +56,11 @@ class Settings(BaseSettings):
     PORT: int = Field(default=8000)
     LOG_LEVEL: str = Field(default="INFO")
     MAX_SESSIONS: int = Field(default=100)
+
+    DEFAULT_TOPIC_LIMIT: int = Field(default=3)
+    DEFAULT_CHUNK_LIMIT: int = Field(default=15)
+    DEFAULT_CHUNK_WEIGHT: float = Field(default=0.7)
+    DEFAULT_TOPIC_WEIGHT: float = Field(default=0.3)
 
     model_config = SettingsConfigDict(
         env_file=".env",

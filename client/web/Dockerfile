@@ -7,11 +7,9 @@ WORKDIR /app
 
 # Manifest-first so the install layer caches across source-only changes.
 # This project uses pnpm (pnpm-lock.yaml); --frozen-lockfile keeps it reproducible.
-COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
-
-COPY . .
-RUN pnpm run build
+COPY package.json package-lock.json* ./
+# Prefer clean install, but fallback to `npm install` if `npm ci` fails inside buildkit
+RUN npm ci --omit=dev || npm install --omit=dev --no-audit --no-fund
 
 # Stage 2: serve the built assets with nginx.
 FROM nginx:alpine

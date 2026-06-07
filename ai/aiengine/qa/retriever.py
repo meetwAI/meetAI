@@ -59,22 +59,9 @@ from aiengine.qa.models import ExtractedQuestion, RetrievedChunk, TimeRange
 logger = logging.getLogger(__name__)
 
 
-# Defaults tuned for a typical 30-60 minute meeting:
-#   - 3 topics covers most "what did we say about X" questions; the relevant
-#     window usually maps to 1-2 topics, the third is insurance against
-#     near-duplicate-topic drift.
-#   - 8 chunks fits comfortably in the answer LLM's prompt (each chunk is
-#     ~30-60s of speech, ~100-200 tokens) without spending too much budget on
-#     low-relevance tail chunks.
-DEFAULT_TOPIC_LIMIT = 1
-DEFAULT_CHUNK_LIMIT = 4
-DEFAULT_CHUNK_WEIGHT = 0.7
-DEFAULT_TOPIC_WEIGHT = 0.3
-
-
-# Encode helper lives in aiengine.embedder.vector_utils so precision and
-# parsing semantics stay in lock-step with store/topics.py.
-from aiengine.embedder.vector_utils import encode_vector as _encode_vector  # noqa: E402
+def _encode_vector(values: Sequence[float]) -> str:
+    """Render a 1024-d vector for pgvector's text-input format."""
+    return "[" + ",".join(f"{v:.8f}" for v in values) + "]"
 
 
 def _normalise_speakers(speakers: Sequence[str]) -> List[str]:
@@ -247,11 +234,11 @@ class QARetriever:
     def __init__(
         self,
         db_pool: asyncpg.Pool,
-        topic_limit: int = DEFAULT_TOPIC_LIMIT,
-        chunk_limit: int = DEFAULT_CHUNK_LIMIT,
+        topic_limit: int = settings.DEFAULT_TOPIC_LIMIT,
+        chunk_limit: int = settings.DEFAULT_CHUNK_LIMIT,
         recent_window_seconds: float = settings.TOPIC_WINDOW_SECONDS,
-        chunk_weight: float = DEFAULT_CHUNK_WEIGHT,
-        topic_weight: float = DEFAULT_TOPIC_WEIGHT,
+        chunk_weight: float = settings.DEFAULT_CHUNK_WEIGHT,
+        topic_weight: float = settings.DEFAULT_TOPIC_WEIGHT,
     ) -> None:
         self._pool = db_pool
         self._topic_limit = int(topic_limit)
@@ -276,22 +263,39 @@ class QARetriever:
         if not text:
             return []
 
+        # Log retrieval invocation with basic metadata
+        try:
+            hints_dump = hints.model_dump() if hasattr(hints, "model_dump") else getattr(hints, "dict", lambda: {})()
+        except Exception:
+            hints_dump = "<unserializable>"
+        logger.info(
+            "QARetriever.retrieve called: meeting_id=%s question_len=%s hints=%s current_duration=%s",
+            meeting_id,
+            len(text),
+            hints_dump,
+            current_duration,
+        )
+
         hints = hints or ExtractedQuestion()
         speakers = _normalise_speakers(hints.speakers)
         if hints.metadata_only:
             return await self._retrieve_metadata_only(
-                meeting_id, hints, speakers, chunk_limit=self._chunk_limit
+                meeting_id, hints, speakers
             )
 
         # 1) Embed the question. One element batch — local mode runs inline,
         #    service mode does one HTTP round-trip.
 
         try:
-            async with asyncio.timeout(10.0):  # 10-second hard ceiling for embedder service
-                vectors = await embed_texts_async([text])
+            vectors= await asyncio.wait_for(embed_texts_async([text]), timeout=10.0)
         except TimeoutError:
             logger.error("QA pipeline failed: Embedding microservice timed out.")
             raise RuntimeError("Embedding service unavailable")
+        logger.debug("Embedding produced %d vectors; first-vector-dim=%d", len(vectors), len(vectors[0]) if vectors else 0)
+        try:
+            logger.debug("Embedding preview (first 5 dims): %s", vectors[0][:5] if vectors and len(vectors[0])>=5 else vectors[0] if vectors else None)
+        except Exception:
+            pass
         if not vectors or len(vectors[0]) != EMBED_DIM:
             raise RuntimeError(
                 f"Question embedding had unexpected shape: "
@@ -311,7 +315,7 @@ class QARetriever:
             self._recent_window_seconds,
             self._chunk_weight,
             self._topic_weight,
-            float(current_duration) if current_duration is not None else 0.0,
+            float(current_duration) if current_duration is not None else 9_999_999.0,
         ]
         next_idx = 8  # next available $N
 
@@ -354,6 +358,8 @@ class QARetriever:
             chunk_limit_placeholder=f"${chunk_limit_idx}",
         )
 
+        logger.debug("SQL preview: %s", sql[:1000])
+        logger.debug("SQL params count=%d", len(params))
         try:
             async with self._pool.acquire() as conn:
                 rows = await conn.fetch(sql, *params)
@@ -367,6 +373,12 @@ class QARetriever:
             )
             raise
 
+        logger.info("SQL returned %d rows for meeting_id=%s", len(rows), meeting_id)
+        try:
+            logger.debug("SQL rows preview: %s", [dict(r) for r in rows[:5]])
+        except Exception:
+            pass
+
         return _rows_to_chunks(rows)
 
     async def _retrieve_metadata_only(
@@ -375,7 +387,7 @@ class QARetriever:
         hints: ExtractedQuestion,
         speakers: Sequence[str],
         *,
-        chunk_limit: int,
+        chunk_limit: int = 100000,
     ) -> List[RetrievedChunk]:
         """
         Return chronological chunks using only metadata filters.
@@ -427,6 +439,20 @@ class QARetriever:
 
         return _rows_to_chunks(rows)
 
+    async def retrieve_meeting_chronological(
+        self,
+        meeting_id: int,
+    ) -> List[RetrievedChunk]:
+        """
+        Return all chunks for a meeting, ordered chronologically.
+        Used for MOM generation.
+        """
+        return await self._retrieve_metadata_only(
+            meeting_id=meeting_id,
+            speakers=set(),
+            hints=ExtractedQuestion(),
+            chunk_limit=100000,
+        )
 
 def _rows_to_chunks(rows) -> List[RetrievedChunk]:
     """Map asyncpg rows from any QA retrieval path into RetrievedChunk."""
@@ -452,4 +478,9 @@ def _rows_to_chunks(rows) -> List[RetrievedChunk]:
                 fused_score=float(r["fused_score"]),
             )
         )
+    try:
+        logger.info("Mapped %d rows into RetrievedChunk objects", len(results))
+        logger.debug("Mapped chunk ids preview: %s", [c.chunk_id for c in results[:10]])
+    except Exception:
+        pass
     return results

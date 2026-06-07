@@ -48,3 +48,6 @@ coverage/
 *.zip
 Screenshot *.png
 New Text Document*
+
+# pnpm content-addressable store (created by in-repo pnpm installs)
+*.pnpm-store/

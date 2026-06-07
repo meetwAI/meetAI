@@ -1,28 +1,3 @@
-"""
-qa/question_extractor.py
-------------------------
-Gemini call #1 of the QA pipeline.
-
-Takes the user's question and asks Gemini to pull out optional retrieval
-hints — which speakers are referenced, and which time ranges. Both are
-*soft hints*: the retriever uses them to narrow the chunk pool when present,
-and falls back to searching every chunk under every matching topic when
-they're absent.
-
-Why structured output
----------------------
-Same reasoning as the topic-extraction client: ``response_json_schema``
-guarantees a JSON-decodable response that matches our Pydantic model. Free
-text would force us to parse natural language hedges ("around the start",
-"maybe Alice or Bob"); structured output makes the boundaries explicit.
-
-Failure mode
-------------
-On any error (network, schema, parse), return an ``ExtractedQuestion`` with
-both lists empty. That's the same behaviour as "Gemini saw the question and
-extracted nothing actionable" — the retriever already handles that case as a
-no-op filter, so the QA pipeline keeps moving instead of bailing on the user.
-"""
 from __future__ import annotations
 
 import asyncio
@@ -46,12 +21,38 @@ Three kinds of hints, all optional:
 
 1. speakers
    - List of speaker names or labels referenced by the question.
-   - Use the names exactly as the user wrote them, lowercased and trimmed.
-   - Examples:
-       "what did Alice say about pricing?"  -> ["alice"]
-       "did anyone disagree with Bob or Carol?" -> ["bob", "carol"]
-       "what did we decide about Q3?" -> []
+   - IMPORTANT — when a KNOWN SPEAKERS list is provided below, you MUST
+     resolve every name the user mentions to the closest match in that list.
+     Apply this resolution for ALL of the following cases:
+       a) Typos / extra letters  : "akramm" -> "akram", "maro" -> "mario"
+       b) Missing letters        : "jon" -> "john", "ale" -> "alex"
+       c) Arabic name or transliteration of a known speaker's name:
+            "اكرم" or "أكرم"  -> "akram"
+            "محمد" or "مو"    -> "mohamed" (if that is in the known list)
+            "ماريو"           -> "mario"
+       d) Common nickname / short form: "mike" -> "michael" if "michael" is
+            in the known list and "mike" is not.
+   - Always return the KNOWN SPEAKERS spelling (lowercased), not whatever
+     the user typed, when a confident match exists.
+   - If the name does NOT match any known speaker (genuinely absent from the
+     meeting), you MUST still return it in English (Latin script):
+       * If the user typed it in Arabic or any non-Latin script, transliterate
+         it to its standard English romanisation before returning it.
+       * NEVER return a name in Arabic, Hebrew, or any other non-Latin script.
+       * NEVER invent or substitute a name that IS in the known list when the
+         user clearly meant someone different.
+       * Examples of the not-in-list case (known speakers: akram, mario):
+           "ماذا قال خالد؟"  -> ["khaled"]   // not in list, transliterated
+           "what did sara say?" -> ["sara"]   // not in list, already English
+   - If no KNOWN SPEAKERS list is provided, apply the same transliteration
+     rule: always return names in English (Latin) script, lowercased.
    - If the user did not name anyone specific, return [].
+   - Examples (assuming known speakers: akram, mario, john):
+       "what did akramm say?"   -> ["akram"]
+       "anything from maro?"    -> ["mario"]
+       "ماذا قال اكرم؟"          -> ["akram"]
+       "what did جون decide?"   -> ["john"]
+       "what did we decide about Q3?" -> []
 
 2. time_ranges
    - List of {start, end} objects in SECONDS from the start of the meeting.
@@ -111,10 +112,23 @@ class QuestionExtractor:
         self._client = genai.Client(api_key=api_key)
 
     async def extract(
-        self, question: str, current_duration: Optional[float] = None
+        self,
+        question: str,
+        current_duration: Optional[float] = None,
+        known_speakers: Optional[list[str]] = None,
     ) -> ExtractedQuestion:
         """
         Parse one user question into ``ExtractedQuestion``.
+
+        Args:
+            question: The raw user question.
+            current_duration: Latest audio timestamp in seconds, used to
+                resolve relative time expressions like "last 10 minutes".
+            known_speakers: Display names of all speakers in this meeting
+                (values from the speaker_map). When provided, the LLM will
+                resolve typos, Arabic transliterations, and nicknames to the
+                canonical name from this list instead of returning whatever
+                the user typed.
 
         Always returns an ``ExtractedQuestion`` — empty lists on any error,
         so the caller never has to handle ``None``. Logs the underlying
@@ -124,16 +138,33 @@ class QuestionExtractor:
         if not text:
             return ExtractedQuestion()
 
+        logger.info(
+            "QuestionExtractor.extract called: question_len=%s current_duration=%s known_speakers=%s",
+            len(text),
+            current_duration,
+            known_speakers,
+        )
+
         duration_text = (
             f"{float(current_duration):.3f} seconds"
             if current_duration is not None and current_duration >= 0
             else "not provided"
         )
+
+        if known_speakers:
+            speakers_block = ", ".join(known_speakers)
+            known_speakers_section = f"KNOWN SPEAKERS (resolve all user-mentioned names to the closest match here):\n{speakers_block}\n\n"
+        else:
+            known_speakers_section = ""
+
         prompt = (
             f"{_PROMPT_INSTRUCTIONS}\n\n"
+            f"{known_speakers_section}"
             f"CURRENT MEETING DURATION:\n{duration_text}\n\n"
             f"USER QUESTION:\n{text}\n"
         )
+        # Prompt preview may contain user content; keep it to a reasonable length
+        logger.debug("QuestionExtractor prompt preview: %s", prompt[:1000])
 
         try:
             response = await asyncio.to_thread(
@@ -153,7 +184,15 @@ class QuestionExtractor:
             return ExtractedQuestion()
 
         parsed: Optional[ExtractedQuestion] = getattr(response, "parsed", None)
+        # Log raw SDK response for debugging
+        raw_text = getattr(response, "text", None)
+        logger.debug("QuestionExtractor raw SDK text preview: %s", raw_text[:1000] if raw_text else None)
+
         if isinstance(parsed, ExtractedQuestion):
+            try:
+                logger.info("QuestionExtractor parsed hints: %s", parsed.model_dump())
+            except Exception:
+                logger.info("QuestionExtractor parsed hints (no dump available)")
             return parsed
 
         # Fallback path: SDK didn't populate ``response.parsed`` (rare but

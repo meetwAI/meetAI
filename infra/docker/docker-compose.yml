@@ -122,6 +122,7 @@ services:
       MEETING_SERVICE_URL: http://meeting-service:4001
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       AI_SERVICE_WS_URL: ws://ai-gateway:8000/asr
+      QA_SERVICE_URL: http://qa-service:8100
       FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-https://localhost:5173}
       # Dev talks to auth-service over its self-signed cert; allow it here only.
       GATEWAY_ALLOW_SELF_SIGNED: ${GATEWAY_ALLOW_SELF_SIGNED:-true}
@@ -294,7 +295,7 @@ services:
       # Frontend API base URL (used by fetchWithAuth).
       VITE_AUTH_URL: ${VITE_AUTH_URL:-https://localhost:4010}
       FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-https://localhost:5173}
-      VITE_AUTH_USE_HTTPS: "true"
+      VITE_AUTH_USE_HTTPS: "false"
     ports:
       - "5173:5173"
     develop:

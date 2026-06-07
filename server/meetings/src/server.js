@@ -104,6 +104,123 @@ const normalizeSpeakerMap = (value = {}) => {
   return map;
 };
 
+const normalizeSpeakers = (participants = [], lines = []) => {
+  const normalizedParticipants = Array.isArray(participants)
+    ? participants.map((entry) => String(entry || '').trim()).filter(Boolean)
+    : [];
+  if (normalizedParticipants.length) {
+    return normalizedParticipants;
+  }
+
+  const seen = new Set();
+  const derived = [];
+  if (Array.isArray(lines)) {
+    for (const line of lines) {
+      const raw = line?.speaker;
+      if (raw == null) {
+        continue;
+      }
+      const speaker = String(raw).trim();
+      if (!speaker || seen.has(speaker)) {
+        continue;
+      }
+      seen.add(speaker);
+      derived.push(speaker);
+    }
+  }
+
+  return derived;
+};
+
+const buildSpeakerMapFromList = (speakers = []) => {
+  const list = Array.isArray(speakers) ? speakers : [];
+  const map = {};
+  const limit = Math.min(list.length, MAX_SPEAKER_COUNT);
+  for (let i = 0; i < limit; i += 1) {
+    const value = String(list[i] || '').trim();
+    if (value) {
+      map[`speaker_${i + 1}`] = value;
+    }
+  }
+  return map;
+};
+
+const getTranscriptSpeakerCount = (lines = []) => {
+  if (!Array.isArray(lines)) {
+    return 0;
+  }
+  const seen = new Set();
+  for (const line of lines) {
+    const raw = line?.speaker;
+    if (raw == null) {
+      continue;
+    }
+    const numeric = Number(raw);
+    if (Number.isFinite(numeric) && numeric < 0) {
+      continue;
+    }
+    const key = String(raw).trim();
+    if (!key) {
+      continue;
+    }
+    seen.add(key);
+  }
+  return seen.size;
+};
+
+const fillSpeakerMap = (speakerMap = {}, count = 0) => {
+  const normalized = normalizeSpeakerMap(speakerMap);
+  const limit = Math.min(Math.max(0, count), MAX_SPEAKER_COUNT);
+  const filled = {};
+  for (let i = 1; i <= limit; i += 1) {
+    const key = `speaker_${i}`;
+    filled[key] = normalized[key] || `Speaker ${i}`;
+  }
+  return filled;
+};
+
+const buildSpeakerMap = (participants = [], lines = []) =>
+  buildSpeakerMapFromList(normalizeSpeakers(participants, lines));
+
+const computeDurationSeconds = ({ startTime, endTime }) => {
+  const startMs = Date.parse(startTime);
+  if (!Number.isFinite(startMs)) {
+    return 0;
+  }
+
+  const endMs = Date.parse(endTime);
+  const effectiveEndMs = Number.isFinite(endMs) ? endMs : Date.now();
+  return Math.max(0, (effectiveEndMs - startMs) / 1000);
+};
+
+const fetchMeetingQaContext = async ({ meetingId, userId }) => {
+  const result = await query(
+    `SELECT
+      COALESCE(full_transcript->'speakerMap', '{}'::jsonb) AS speaker_map,
+      COALESCE(full_transcript->'participants', '[]'::jsonb) AS participants,
+      COALESCE(full_transcript->'lines', '[]'::jsonb) AS lines,
+      start_time,
+      end_time
+    FROM meetings
+    WHERE id = $1 AND user_id = $2
+    LIMIT 1`,
+    [meetingId, userId],
+  );
+
+  const row = result.rows[0];
+  if (!row) {
+    return null;
+  }
+
+  return {
+    speakerMap: row.speaker_map,
+    participants: row.participants,
+    lines: row.lines,
+    startTime: row.start_time,
+    endTime: row.end_time,
+  };
+};
+
 /**
  * Deduplicate and merge raw transcript lines exactly as the frontend does.
  *
@@ -207,16 +324,8 @@ const fetchWithRetry = async (url, options, { attempts = 3, baseDelayMs = 250 } 
   throw lastError || new Error('fetch failed');
 };
 
-const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'https://localhost:5173';
-
 const app = express();
-app.use(
-  cors({
-    origin: FRONTEND_ORIGIN,
-    credentials: true,
-    methods: ['GET', 'POST', 'PATCH', 'DELETE'],
-  }),
-);
+app.use(cors({ origin: '*', methods: ['GET', 'POST', 'PATCH', 'DELETE'] }));
 app.use(express.json());
 
 app.get('/health', (_req, res) => {
@@ -530,7 +639,7 @@ app.post('/meetings/:meetingId/messages', (req, res) => {
   if (!text) {
     return res.status(400).json({ message: 'Message content is required.' });
   }
-if (req.body?.mode === 'qa') {
+  if (req.body?.mode === 'qa') {
     return handleQaMessage({ req, res, meetingId, userId, question: text });
   }
   const role = req.body?.role === 'assistant' ? 'assistant' : 'user';
@@ -661,6 +770,52 @@ const handleQaMessage = async ({ req, res, meetingId, userId, question }) => {
     }
   });
 
+  const incomingSpeakerMap = normalizeSpeakerMap(
+    req.body?.speaker_map || req.body?.speakerMap,
+  );
+  let speakerMap = incomingSpeakerMap;
+  let currentDuration = Number(req.body?.current_duration ?? req.body?.currentDuration);
+  if (!Number.isFinite(currentDuration)) {
+    currentDuration = null;
+  }
+
+  if (!Object.keys(speakerMap).length || currentDuration == null) {
+    try {
+      const context = await fetchMeetingQaContext({ meetingId, userId });
+      if (context) {
+        const meetingSpeakerMap = normalizeSpeakerMap(context.speakerMap);
+        const derivedSpeakerMap = Object.keys(meetingSpeakerMap).length
+          ? meetingSpeakerMap
+          : buildSpeakerMap(context.participants, context.lines);
+        const transcriptCount = getTranscriptSpeakerCount(context.lines);
+        const speakerCount = Math.min(
+          MAX_SPEAKER_COUNT,
+          Math.max(transcriptCount, Object.keys(derivedSpeakerMap).length),
+        );
+        const filledSpeakerMap = fillSpeakerMap(derivedSpeakerMap, speakerCount);
+
+        if (!Object.keys(speakerMap).length) {
+          speakerMap = filledSpeakerMap;
+        } else if (transcriptCount) {
+          speakerMap = fillSpeakerMap(speakerMap, speakerCount);
+        }
+
+        if (currentDuration == null) {
+          currentDuration = computeDurationSeconds({
+            startTime: context.startTime,
+            endTime: context.endTime,
+          });
+        }
+      }
+    } catch (error) {
+      console.warn('[meeting-service] qa: failed to hydrate speaker map/duration', error);
+    }
+  }
+
+  if (!Number.isFinite(currentDuration)) {
+    currentDuration = 0;
+  }
+
   // 3) Open the upstream SSE call.
   let upstream;
   try {
@@ -674,8 +829,8 @@ const handleQaMessage = async ({ req, res, meetingId, userId, question }) => {
         meeting_id: meetingId,
         user_id: userId,
         question,
-        speaker_map: req.body?.speaker_map,
-        current_duration: req.body?.current_duration,
+        speaker_map: speakerMap,
+        current_duration: currentDuration,
       }),
       signal: abortController.signal,
     });
@@ -995,6 +1150,45 @@ app.delete('/meetings/:meetingId', (req, res) => {
     });
 });
 
+app.patch('/meetings/:meetingId/summary', (req, res) => {
+  const userId = requireUserId(req, res);
+  if (!userId) {
+    return;
+  }
+
+  const meetingId = Number(req.params.meetingId);
+  if (!Number.isFinite(meetingId) || meetingId <= 0) {
+    return res.status(400).json({ message: 'Invalid meeting id.' });
+  }
+
+  const { summary } = req.body;
+  if (typeof summary !== 'string') {
+    return res.status(400).json({ message: 'Summary must be a string.' });
+  }
+
+  return query(
+    `UPDATE meetings
+     SET summarisation = $1
+     WHERE id = $2 AND user_id = $3
+     RETURNING id, summarisation`,
+    [summary, meetingId, userId],
+  )
+    .then((result) => {
+      const row = result.rows[0];
+      if (!row) {
+        return res.status(404).json({ message: 'Meeting not found.' });
+      }
+      return res.json({
+        id: row.id,
+        summary: row.summarisation || '',
+      });
+    })
+    .catch((error) => {
+      console.error('[meeting-service] failed to update meeting summary', error);
+      return res.status(500).json({ message: 'Failed to update meeting summary.' });
+    });
+});
+
 app.post('/meetings/:meetingId/complete', (req, res) => {
   const userId = requireUserId(req, res);
   if (!userId) {
@@ -1052,5 +1246,6 @@ server.listen(PORT, () => {
   // eslint-disable-next-line no-console
   console.log(`Meeting service listening on ${PORT} (hosted on ${os.hostname()})`);
 });
+
 
 installShutdown(server, { pool });

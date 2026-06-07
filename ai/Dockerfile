@@ -33,7 +33,9 @@ RUN --mount=type=bind,source=${REQUIREMENTS},target=/tmp/req.txt \
 
 # Copy the package + weights. Build context is ./ai (the package root).
 COPY aiengine /workspace/aiengine
-COPY weights /workspace/weights
+# vad.py resolves Silero models at <package>/models/silero_vad_models/, so land
+# the files there directly (the resolver appends just the filename).
+COPY weights/silero_vad /workspace/aiengine/models/silero_vad_models
 
 # Keep /workspace on sys.path so `python -m aiengine.*` resolves the package.
 ENV PYTHONPATH=/workspace

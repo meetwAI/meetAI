@@ -6,12 +6,18 @@ RUN corepack enable
 
 WORKDIR /app
 
-# This project uses pnpm (pnpm-lock.yaml). Manifest-first for layer caching.
-COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
+# Install dependencies. This project uses pnpm (pnpm-lock.yaml); the runtime
+# `pnpm run dev` also runs `pnpm install` against the bind-mounted source, so
+# esbuild's build script must be pre-approved (pnpm-workspace.yaml allowBuilds)
+# or pnpm aborts non-interactively with ERR_PNPM_IGNORED_BUILDS.
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile || pnpm install
 
+# Copy the rest of the app
 COPY . .
 
+# Expose Vite dev server port
 EXPOSE 5173
 
+# Default command
 CMD ["pnpm", "run", "dev"]

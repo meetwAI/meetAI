@@ -1,2 +1,5 @@
+# pnpm v11 moved build-script approval here (out of package.json's "pnpm" field).
+# esbuild ships a postinstall that fetches its native binary; without this,
+# pnpm install aborts non-interactively with ERR_PNPM_IGNORED_BUILDS.
 allowBuilds:
-  esbuild: set this to true or false
+  esbuild: true

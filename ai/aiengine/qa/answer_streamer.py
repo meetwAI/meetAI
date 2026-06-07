@@ -1,36 +1,3 @@
-"""
-qa/answer_streamer.py
----------------------
-Gemini call #2 of the QA pipeline: turn the retrieved chunks into a streamed
-answer, token by token.
-
-Strict RAG
-----------
-The prompt forces the model to answer ONLY from the provided chunks. If the
-retrieved context doesn't cover the question, the model must say so plainly
-instead of hallucinating from background knowledge. The model is also asked
-to cite chunk_ids inline so the UI can later highlight the source spans —
-this is a low-cost win because Gemini already sees the chunk_ids in the
-prompt; we just ask it to keep referring to them.
-
-Streaming
----------
-google-genai's ``models.generate_content_stream`` is a synchronous iterator.
-We wrap it so the FastAPI endpoint can ``async for`` over deltas without
-blocking the event loop. Each ``next()`` call on the underlying iterator is
-offloaded to a worker thread (``asyncio.to_thread``); we yield each chunk's
-``.text`` immediately as soon as it arrives.
-
-Failure mode
-------------
-- Empty context (retriever returned no chunks) → yield a single fixed
-  refusal string, then end. We don't waste a Gemini call when there is
-  nothing to ground on.
-- Network or schema error mid-stream → yield an error sentinel object so
-  the server can emit an SSE ``error`` event without breaking the stream
-  contract. The QA server is the only caller and it knows how to interpret
-  the sentinel.
-"""
 from __future__ import annotations
 
 import asyncio
@@ -41,7 +8,7 @@ from typing import AsyncIterator, List, Optional
 from google import genai
 from google.genai import types as genai_types
 
-from aiengine.qa.models import RetrievedChunk
+from aiengine.qa.models import RetrievedChunk, ExtractedQuestion
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +32,18 @@ RULES:
   items the speakers enumerated.
 """
 
+_MOM_PROMPT_INSTRUCTIONS = """\
+You are an expert meeting assistant. Your task is to write the Minutes of Meeting (MOM) for the provided meeting transcript chunks. 
+The transcript chunks are presented chronologically. 
+
+RULES:
+- Provide a structured summary with clear sections (e.g., Overview, Key Topics Discussed, Action Items).
+- Be concise and professional.
+- Rely ONLY on the provided transcript chunks. Do not hallucinate or invent information.
+- Mention speakers by name when relevant.
+- Do not include technical metadata (like chunk_ids) in the final output.
+"""
+
 
 # Sentinel returned mid-stream when the underlying SDK raises. The QA server
 # pattern-matches on the type — keeps the public type small.
@@ -84,6 +63,10 @@ def _format_chunks(chunks: List[RetrievedChunk]) -> str:
       - the chunk text itself.
     """
     lines: List[str] = []
+    try:
+        logger.debug("Formatting %d chunks for prompt: %s", len(chunks), [c.chunk_id for c in chunks])
+    except Exception:
+        pass
     for c in chunks:
         meta_bits: List[str] = [f"chunk_id={c.chunk_id}", f"topic={c.topic!r}"]
         if c.speakers:
@@ -92,6 +75,92 @@ def _format_chunks(chunks: List[RetrievedChunk]) -> str:
             meta_bits.append(f"start={c.start_time:.1f}s")
         lines.append(f"[{' | '.join(meta_bits)}]\n{c.text.strip()}")
     return "\n\n".join(lines)
+
+
+def _format_seconds(total: float) -> str:
+    """
+    Convert a raw second count into a compact human-readable string.
+
+    Examples::
+
+        _format_seconds(0)     -> "0s"
+        _format_seconds(90)    -> "1m 30s"
+        _format_seconds(3661)  -> "1h 01m 01s"
+    """
+    total = int(total)
+    h, rem = divmod(total, 3600)
+    m, s = divmod(rem, 60)
+    if h:
+        return f"{h}h {m:02d}m {s:02d}s"
+    if m:
+        return f"{m}m {s:02d}s"
+    return f"{s}s"
+
+
+def _build_empty_context_message(hints: ExtractedQuestion) -> str | None:
+    """
+    When the retriever returned no chunks but the question carried specific
+    hints, produce a precise, contextual explanation instead of the generic
+    "I don't have enough information" refusal.
+
+    Returns ``None`` when the hints are empty (no speakers, no time ranges),
+    signalling that the caller should fall back to the generic refusal.
+
+    Cases handled
+    -------------
+    * speakers + time ranges → "<names> did not speak between <start> and <end>"
+    * speakers only          → "<names> did not speak at all in this meeting"
+    * time ranges only       → "<start>–<end> appears to be silence / no speech"
+    """
+    has_speakers = bool(hints.speakers)
+    has_times = bool(hints.time_ranges)
+
+    if not has_speakers and not has_times:
+        return None
+
+    # --- helpers -------------------------------------------------------------
+    def _speaker_str() -> str:
+        names = [s.title() for s in hints.speakers]
+        if len(names) == 1:
+            return names[0]
+        return ", ".join(names[:-1]) + f" and {names[-1]}"
+
+    def _range_str(tr) -> str:
+        if tr.start is not None and tr.end is not None:
+            return f"{_format_seconds(tr.start)} – {_format_seconds(tr.end)}"
+        if tr.start is not None:
+            return f"after {_format_seconds(tr.start)}"
+        if tr.end is not None:
+            return f"before {_format_seconds(tr.end)}"
+        return "the requested period"
+
+    # --- build message -------------------------------------------------------
+    if has_speakers and has_times:
+        speaker_part = _speaker_str()
+        range_parts = ", ".join(_range_str(tr) for tr in hints.time_ranges)
+        plural = "that period" if len(hints.time_ranges) == 1 else "those periods"
+        return (
+            f"There is no record of {speaker_part} speaking during "
+            f"{range_parts} in this meeting — "
+            f"{speaker_part} appears to have been silent for {plural}."
+        )
+
+    if has_speakers:
+        speaker_part = _speaker_str()
+        verb = "does" if len(hints.speakers) == 1 else "do"
+        return (
+            f"There is no record of {speaker_part} speaking anywhere in "
+            f"this meeting's transcript — {speaker_part} {verb} not appear "
+            f"to have contributed during the recorded session."
+        )
+
+    # has_times only
+    range_parts = ", ".join(_range_str(tr) for tr in hints.time_ranges)
+    plural = "that window" if len(hints.time_ranges) == 1 else "those windows"
+    return (
+        f"No speech was found between {range_parts} in this meeting — "
+        f"{plural} appears to be silence or was not captured in the transcript."
+    )
 
 
 class AnswerStreamer:
@@ -116,6 +185,7 @@ class AnswerStreamer:
         self,
         question: str,
         chunks: List[RetrievedChunk],
+        hints: Optional[ExtractedQuestion] = None,
     ) -> AsyncIterator[str | StreamError]:
         """
         Yield text deltas as Gemini produces them.
@@ -125,8 +195,11 @@ class AnswerStreamer:
               yielded string gives the full answer.
             - ``StreamError`` — once, on failure, then the iterator ends.
 
-        For the "no context" case there is no Gemini call: yield the fixed
-        refusal once and return.
+        For the "no context" case there is no Gemini call:
+        - If ``hints`` carries speaker or time-range information we emit a
+          precise, contextual message (e.g. "Alice did not speak between
+          2m 00s – 5m 00s") instead of the generic refusal.
+        - Otherwise fall back to the generic refusal string.
         """
         text = (question or "").strip()
         if not text:
@@ -135,28 +208,67 @@ class AnswerStreamer:
             return
 
         if not chunks:
-            yield self.REFUSAL_NO_CONTEXT
+            # Try to produce a specific, contextual message before falling back
+            # to the generic refusal. No Gemini call in either branch.
+            contextual = (
+                _build_empty_context_message(hints) if hints is not None else None
+            )
+            yield contextual if contextual is not None else self.REFUSAL_NO_CONTEXT
             return
+        
+
+        try:
+            logger.info(
+                "AnswerStreamer.stream_answer called: question_len=%s chunks=%s",
+                len(text),
+                [c.chunk_id for c in chunks],
+            )
+        except Exception:
+            pass
 
         prompt = (
             f"{_PROMPT_INSTRUCTIONS}\n\n"
             f"USER QUESTION:\n{text}\n\n"
             f"TRANSCRIPT CHUNKS:\n{_format_chunks(chunks)}\n"
         )
-        async for item in self._stream_prompt(prompt):
+        logger.debug("Answer prompt preview (len=%d): %s", len(prompt), prompt[:1000])
+        async for item in self._stream_prompt(prompt, self._model):
+            yield item
+
+    async def stream_minutes_of_meeting(
+        self,
+        chunks: List[RetrievedChunk],
+        model: str,
+    ) -> AsyncIterator[str | StreamError]:
+        """
+        Generate MOM using the specified model.
+        """
+        if not chunks:
+            yield self.REFUSAL_NO_CONTEXT
+            return
+
+        prompt = (
+            f"{_MOM_PROMPT_INSTRUCTIONS}\n\n"
+            f"TRANSCRIPT CHUNKS:\n{_format_chunks(chunks)}\n"
+        )
+        logger.debug("MOM prompt preview (len=%d): %s", len(prompt), prompt[:1000])
+        async for item in self._stream_prompt(prompt, model):
             yield item
 
     async def _stream_prompt(
         self,
         prompt: str,
+        model: str,
     ) -> AsyncIterator[str | StreamError]:
         # Open the streaming call in a worker thread; google-genai's stream
         # iterator is synchronous. We then pull from it one chunk at a time,
         # also in a worker thread, so the event loop never blocks.
         try:
+            logger.info("Opening Gemini stream: model=%s prompt_len=%d", model, len(prompt))
+            logger.debug("Stream prompt preview: %s", prompt[:1000])
             stream = await asyncio.to_thread(
                 self._client.models.generate_content_stream,
-                model=self._model,
+                model=model,
                 contents=prompt,
                 config=genai_types.GenerateContentConfig(
                     # No structured-output schema here: free text is the
@@ -164,6 +276,7 @@ class AnswerStreamer:
                     response_mime_type="text/plain",
                 ),
             )
+            logger.info("Gemini stream opened successfully: model=%s", model)
         except Exception as exc:
             logger.exception("AnswerStreamer: failed to open Gemini stream")
             yield StreamError(message=f"Gemini stream open failed: {exc}")
@@ -185,12 +298,14 @@ class AnswerStreamer:
             while True:
                 item = await asyncio.to_thread(_next_chunk, iterator)
                 if item is _DONE:
+                    logger.info("Gemini stream closed cleanly: model=%s", model)
                     return
                 # google-genai chunk objects carry incremental ``.text``.
                 # Some chunks are tool-call / safety placeholders with no
                 # text; skip those without ending the stream.
                 delta = getattr(item, "text", None)
                 if delta:
+                    logger.debug("Gemini delta chunk: %s", delta)
                     yield delta
         except Exception as exc:
             logger.exception("AnswerStreamer: error mid-stream")

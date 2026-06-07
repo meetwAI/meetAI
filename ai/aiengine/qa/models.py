@@ -2,21 +2,9 @@
 qa/models.py
 ------------
 Pydantic contracts for the QA pipeline.
-
-Three roles:
-
-1.  ``QuestionFilters`` / ``ExtractedQuestion`` — Gemini's structured response
-    when we ask it to look at the user's question and pull out optional hints
-    (speakers and time ranges). ``ExtractedQuestion`` is what we pass as
-    ``response_schema`` so the API guarantees a JSON-decodable shape.
-
-2.  ``RetrievedChunk`` — internal handoff from the retriever to the answer
-    streamer. One row per chunk that survived the fused-vector ranking.
-
-3.  ``QARequest`` — what the meeting-service POSTs to the QA service. The
-    answer-side response is streamed as SSE, not a single Pydantic model, so
-    there is no ``QAResponse`` here.
 """
+
+
 from __future__ import annotations
 
 from typing import Dict, List, Optional
@@ -77,4 +65,13 @@ class QARequest(BaseModel):
     user_id: int
     question: str
     current_duration: Optional[float] = None
+    speaker_map: Optional[Dict[str, str]] = None
+
+
+class MOMRequest(BaseModel):
+    """
+    Body of ``POST /mom``.
+    """
+    meeting_id: int
+    user_id: int
     speaker_map: Optional[Dict[str, str]] = None

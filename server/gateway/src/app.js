@@ -22,6 +22,7 @@ const AUTH_SERVICE_URL = requireEnv('AUTH_SERVICE_URL');
 const FRONTEND_ORIGIN = requireEnv('FRONTEND_ORIGIN');
 const AI_SERVICE_WS_URL = process.env.AI_SERVICE_WS_URL || 'ws://localhost:8000/asr';
 const useHttps = process.env.AUTH_USE_HTTPS === 'true';
+const QA_SERVICE_URL = (process.env.QA_SERVICE_URL || 'http://ai-gateway:8000').trim().replace(/\/+$/, '');
 // Only skip upstream TLS verification when explicitly opted in (dev with
 // self-signed certs). In prod this stays false so upstream certs are verified.
 const ALLOW_SELF_SIGNED = process.env.GATEWAY_ALLOW_SELF_SIGNED === 'true';
@@ -30,6 +31,7 @@ const meetingCacheClient = getRedisClient({
   cacheKey: 'gateway',
   serviceName: 'gateway',
 });
+
 
 const app = express();
 app.use(
@@ -43,15 +45,15 @@ app.use(express.json());
 app.use((req, res, next) => {
   const start = Date.now();
   const { method, path } = req;
-  
+
   // Capture the original send to log the response
   const originalSend = res.send;
-  res.send = function(body) {
+  res.send = function (body) {
     const duration = Date.now() - start;
     console.log(`[gateway] ${method} ${path} -> ${res.statusCode} (${duration}ms) - Body length: ${body ? body.length : 0}`);
     return originalSend.apply(res, arguments);
   };
-  
+
   next();
 });
 
@@ -423,18 +425,19 @@ const updateMeetingQaCache = async ({
     const redisReady = await ensureRedisReady(meetingCacheClient, 'gateway');
     if (!redisReady) {
       console.warn('[gateway] redis not ready; skipping QA meeting cache');
-      return null;
     }
 
     const cacheKey = `${MEETING_QA_CACHE_PREFIX}${meetingId}`;
     let existingParsed = null;
-    try {
-      const existing = await meetingCacheClient.get(cacheKey);
-      if (existing) {
-        existingParsed = JSON.parse(existing);
+    if (redisReady) {
+      try {
+        const existing = await meetingCacheClient.get(cacheKey);
+        if (existing) {
+          existingParsed = JSON.parse(existing);
+        }
+      } catch (error) {
+        console.warn('[gateway] failed reading QA cache', error);
       }
-    } catch (error) {
-      console.warn('[gateway] failed reading QA cache', error);
     }
 
     const meeting = await fetchMeetingMetadata({ meetingId, userId, authToken });
@@ -442,7 +445,7 @@ const updateMeetingQaCache = async ({
       return null;
     }
 
-    const cachedSpeakers = normalizeSpeakerMap(existingParsed?.speakers);
+    const cachedSpeakers = redisReady ? normalizeSpeakerMap(existingParsed?.speakers) : {};
     const meetingSpeakers = normalizeSpeakerMap(meeting?.speakerMap);
     const speakerMap = hasSpeakersOverride
       ? normalizeSpeakerMap(speakersOverride)
@@ -464,63 +467,120 @@ const updateMeetingQaCache = async ({
         startTime: meeting.startTime,
         endTime: meeting.endTime,
       }),
+      updatedAt: Date.now(),
     };
-    let shouldWrite = true;
 
-    try {
-      if (existingParsed) {
-        if (
-          typeof existingParsed?.duration === 'number' &&
-          areSpeakerMapsEqual(existingParsed?.speakers, payload.speakers) &&
-          existingParsed.duration === payload.duration
-        ) {
-          shouldWrite = false;
-        }
-      }
-    } catch (error) {
-      console.warn('[gateway] failed comparing QA cache', error);
-    }
+    if (redisReady) {
+      let shouldWrite = true;
 
-    if (shouldWrite) {
-      await meetingCacheClient.set(cacheKey, JSON.stringify(payload), {
-        EX: MEETING_QA_CACHE_TTL_SECONDS,
-      });
-      console.log('[gateway] QA meeting cache set', {
-        key: cacheKey,
-        ttlSeconds: MEETING_QA_CACHE_TTL_SECONDS,
-        payload,
-      });
-    } else {
-      await meetingCacheClient.expire(cacheKey, MEETING_QA_CACHE_TTL_SECONDS);
-      console.log('[gateway] QA meeting cache refresh', {
-        key: cacheKey,
-        ttlSeconds: MEETING_QA_CACHE_TTL_SECONDS,
-      });
-    }
-    try {
-      const keys = await meetingCacheClient.keys(`${MEETING_QA_CACHE_PREFIX}*`);
-      const allEntries = {};
-      for (const k of keys || []) {
-        try {
-          const raw = await meetingCacheClient.get(k);
-          try {
-            allEntries[k] = raw ? JSON.parse(raw) : null;
-          } catch (_p) {
-            allEntries[k] = raw;
+      try {
+        if (existingParsed) {
+          if (
+            typeof existingParsed?.duration === 'number' &&
+            areSpeakerMapsEqual(existingParsed?.speakers, payload.speakers) &&
+            existingParsed.duration === payload.duration
+          ) {
+            shouldWrite = false;
           }
-        } catch (e) {
-          allEntries[k] = null;
         }
+      } catch (error) {
+        console.warn('[gateway] failed comparing QA cache', error);
       }
-      console.log('[gateway] QA meeting cache all entries', allEntries);
-    } catch (err) {
-      console.warn('[gateway] failed to enumerate QA cache entries', err);
+
+      if (shouldWrite) {
+        await meetingCacheClient.set(cacheKey, JSON.stringify(payload), {
+          EX: MEETING_QA_CACHE_TTL_SECONDS,
+        });
+        console.log('[gateway] QA meeting cache set', {
+          key: cacheKey,
+          ttlSeconds: MEETING_QA_CACHE_TTL_SECONDS,
+          payload,
+        });
+      } else {
+        await meetingCacheClient.expire(cacheKey, MEETING_QA_CACHE_TTL_SECONDS);
+        console.log('[gateway] QA meeting cache refresh', {
+          key: cacheKey,
+          ttlSeconds: MEETING_QA_CACHE_TTL_SECONDS,
+        });
+      }
+
+      try {
+        const keys = await meetingCacheClient.keys(`${MEETING_QA_CACHE_PREFIX}*`);
+        const allEntries = {};
+        for (const k of keys || []) {
+          try {
+            const raw = await meetingCacheClient.get(k);
+            try {
+              allEntries[k] = raw ? JSON.parse(raw) : null;
+            } catch (_p) {
+              allEntries[k] = raw;
+            }
+          } catch (e) {
+            allEntries[k] = null;
+          }
+        }
+        console.log('[gateway] QA meeting cache all entries', allEntries);
+      } catch (err) {
+        console.warn('[gateway] failed to enumerate QA cache entries', err);
+      }
     }
     return payload;
   } catch (error) {
     console.warn('[gateway] failed updating QA meeting cache', error);
   }
   return null;
+};
+
+const generateAndPersistMOM = async ({ meetingId, userId, authToken }) => {
+  try {
+    let speakerMap = null;
+    const redisReady = await ensureRedisReady(meetingCacheClient, 'gateway');
+    if (redisReady) {
+      const cacheKey = `${MEETING_QA_CACHE_PREFIX}${meetingId}`;
+      const existing = await meetingCacheClient.get(cacheKey);
+      if (existing) {
+        const existingParsed = JSON.parse(existing);
+        speakerMap = normalizeSpeakerMap(existingParsed?.speakers);
+      }
+    }
+
+    const aiRes = await fetch(`${QA_SERVICE_URL}/mom`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        meeting_id: meetingId,
+        user_id: userId,
+        speaker_map: speakerMap,
+      }),
+    });
+
+    if (!aiRes.ok) {
+      throw new Error(`QA service returned ${aiRes.status}`);
+    }
+
+    const { answer } = await aiRes.json();
+    if (!answer) {
+      return;
+    }
+
+    const msRes = await fetch(`${MEETING_SERVICE_URL}/meetings/${meetingId}/summary`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: authToken ? `Bearer ${authToken}` : '',
+        'x-user-id': String(userId),
+      },
+      body: JSON.stringify({ summary: answer }),
+    });
+
+    if (!msRes.ok) {
+      throw new Error(`Meeting service returned ${msRes.status}`);
+    }
+
+    console.log(`[gateway] MOM generated and saved for meeting ${meetingId}`);
+  } catch (error) {
+    console.error(`[gateway] Failed to generate/persist MOM for meeting ${meetingId}:`, error);
+  }
 };
 
 app.get('/health', (_req, res) => {
@@ -742,10 +802,10 @@ const proxyMeetingService = (method, path, req, res) => {
   const wantsSse =
     clientAccept.includes('text/event-stream') ||
     (req.body && req.body.mode === 'qa');
-  const headers = { ...req.headers}
+  const headers = { ...req.headers }
   delete headers.host;
   delete headers['content-length'];
-  headers.Accept =  wantsSse ? 'text/event-stream' : 'application/json';
+  headers.Accept = wantsSse ? 'text/event-stream' : 'application/json';
   headers.Authorization = req.authToken ? `Bearer ${req.authToken}` : (req.headers.authorization || '');
   headers['x-user-id'] = req.authUser?.id ? String(req.authUser.id) : '';
 
@@ -758,7 +818,7 @@ const proxyMeetingService = (method, path, req, res) => {
     targetUrl,
     { method, headers, rejectUnauthorized: !ALLOW_SELF_SIGNED },
     (proxyRes) => {
-        const upstreamType = String(
+      const upstreamType = String(
         proxyRes.headers['content-type'] || 'application/json',
       );
       const isStream = upstreamType.toLowerCase().includes('text/event-stream');
@@ -820,7 +880,7 @@ const proxyMeetingService = (method, path, req, res) => {
   proxyReq.on('error', (error) => {
     console.error('[gateway] meeting service proxy error', error);
     if (!res.headersSent) {
-      res.status(502).json({ message: 'Meeting service unavailable.' }); 
+      res.status(502).json({ message: 'Meeting service unavailable.' });
     } else if (!res.writableEnded) {
       res.end();
     }
@@ -1001,11 +1061,15 @@ app.post('/meetings/:meetingId/messages', async (req, res) => {
         userId,
         authToken: req.authToken,
       });
-      if (payload) {
-        req.body.speaker_map = payload.speakers;
-        if (typeof payload.duration === 'number') {
-          req.body.current_duration = payload.duration / 1000;
-        }
+      const speakerMap = payload?.speakers ?? normalizeSpeakerMap(req.body?.speaker_map);
+      req.body.speaker_map = speakerMap;
+
+      const durationSeconds =
+        typeof payload?.duration === 'number'
+          ? payload.duration / 1000
+          : Number(req.body?.current_duration);
+      if (Number.isFinite(durationSeconds)) {
+        req.body.current_duration = durationSeconds;
       }
     }
   }
@@ -1054,6 +1118,10 @@ app.patch('/meetings/:meetingId/qa-cache', async (req, res) => {
 
 app.patch('/meetings/:meetingId/transcript', (req, res) =>
   proxyMeetingService('PATCH', `/meetings/${encodeURIComponent(req.params.meetingId)}/transcript`, req, res),
+);
+
+app.patch('/meetings/:meetingId/summary', (req, res) =>
+  proxyMeetingService('PATCH', `/meetings/${encodeURIComponent(req.params.meetingId)}/summary`, req, res),
 );
 
 app.post('/meetings/:meetingId/complete', (req, res) =>
@@ -1235,6 +1303,10 @@ io.on('connection', (socket) => {
         console.log('[gateway] ai session ready_to_stop', { meetingId });
         emitSessionEnded();
         cleanupAiSocket();
+
+        generateAndPersistMOM({ meetingId, userId, authToken })
+          .catch((err) => console.error('[gateway] MOM generation failed', err));
+
         aiSocket = null;
         activeMeetingId = null;
         lastLoggedTranscript = '';
