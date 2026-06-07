@@ -1,0 +1,164 @@
+% =============================================================================
+% Chapter 7: Results and Discussion (placeholder)
+% =============================================================================
+
+\chapter{Results and Discussion}
+\label{ch:results}
+
+\todo{Write Chapter 7 per the guide's KSI requirements.}
+
+\section{Analysis of Experimental Results}
+\todo{Discuss the model evaluation results from \cref{sec:model-eval}.}
+
+\section{Performance Breakdown}
+\todo{Edge cases, code-switch slices, minority classes, overlapping
+speakers, ambiguous time references.}
+
+\section{Implications for Software Engineering Practice}
+\todo{Connect ML performance back to the original SE problem; discuss
+trade-offs between model complexity and computational cost.}
+
+\section{Limitations of the Current Approach}
+\todo{Honest discussion of limitations (e.g., small fine-tune dataset,
+single-dialect, no overlap handling, English-only QA generation).}
+
+% ---------------------------------------------------------------------------
+% 7.5 Model Evaluation (TBD)
+% ---------------------------------------------------------------------------
+\section{Model Evaluation}
+\label{sec:model-eval}
+
+\subsection{ASR Evaluation}
+\todo{Fill the metrics below from the experiment log.}
+
+\begin{table}[H]
+\centering
+\caption{ASR quality on the code-switched Egyptian Arabic test set. TBD
+values will be replaced with measured metrics. Best per row in
+\textbf{bold}. BS = baseline (off-the-shelf Whisper), LoRA = fine-tuned
+model, $k$ = local-agreement threshold.}
+\label{tab:asr-metrics}
+\begin{tabularx}{\textwidth}{l X X X X}
+\toprule
+\textbf{Model} & \textbf{Setting} & \textbf{WER} & \textbf{CER} & \textbf{Notes} \\
+\midrule
+BS, $k=1$     & \tbd & \tbd & \tbd & streaming, no commit \\
+BS, $k=3$     & \tbd & \tbd & \tbd & local-agreement \\
+LoRA, $k=1$   & \tbd & \tbd & \tbd & \tbd \\
+LoRA, $k=3$   & \tbd & \tbd & \tbd & \tbd \\
+LoRA, $k=5$   & \tbd & \tbd & \tbd & \tbd \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{ASR quality broken down by language slice. TBD.}
+\label{tab:asr-by-slice}
+\begin{tabularx}{\textwidth}{l X X X}
+\toprule
+\textbf{Model} & \textbf{Egyptian Arabic WER} & \textbf{English WER} & \textbf{Code-Switch WER} \\
+\midrule
+BS             & \tbd & \tbd & \tbd \\
+LoRA (ours)    & \tbd & \tbd & \tbd \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Diarization Evaluation}
+
+\begin{table}[H]
+\centering
+\caption{Speaker-diarization performance. TBD.}
+\label{tab:diarization-metrics}
+\begin{tabularx}{\textwidth}{l X X X}
+\toprule
+\textbf{Setting} & \textbf{DER} & \textbf{Speaker Attribution Acc.} & \textbf{Notes} \\
+\midrule
+Pretrained Sortformer       & \tbd & \tbd & \tbd \\
+With sortformer + alignment & \tbd & \tbd & \tbd \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Retrieval and QA Evaluation}
+
+\begin{table}[H]
+\centering
+\caption{Retrieval and QA quality. TBD.}
+\label{tab:retrieval-qa-metrics}
+\begin{tabularx}{\textwidth}{l X X X X}
+\toprule
+\textbf{Setting} & \textbf{Recall@5} & \textbf{MRR} & \textbf{nDCG@10} & \textbf{Answer Faithfulness} \\
+\midrule
+Chunk-only              & \tbd & \tbd & \tbd & \tbd \\
+Topic + chunk fusion    & \tbd & \tbd & \tbd & \tbd \\
+With speaker filter     & \tbd & \tbd & \tbd & \tbd \\
+With time filter        & \tbd & \tbd & \tbd & \tbd \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+% ---------------------------------------------------------------------------
+% 7.6 System Evaluation (TBD)
+% ---------------------------------------------------------------------------
+\section{System Evaluation}
+\label{sec:system-eval}
+
+\subsection{Streaming ASR Latency}
+
+\begin{table}[H]
+\centering
+\caption{Streaming ASR latency and real-time factor. TBD.}
+\label{tab:asr-latency}
+\begin{tabularx}{\textwidth}{l X X X}
+\toprule
+\textbf{Setting} & \textbf{First-Token Latency} & \textbf{Word Commit Latency} & \textbf{RTF} \\
+\midrule
+$k=1$ (no local agreement)  & \tbd & \tbd & \tbd \\
+$k=3$ (local agreement)     & \tbd & \tbd & \tbd \\
+$k=5$ (strict)              & \tbd & \tbd & \tbd \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{End-to-End QA Latency}
+
+\begin{table}[H]
+\centering
+\caption{End-to-end QA latency for temporal-speaker queries. TBD.}
+\label{tab:qa-latency}
+\begin{tabularx}{\textwidth}{l X X}
+\toprule
+\textbf{Query Type} & \textbf{P50 Latency} & \textbf{P95 Latency} \\
+\midrule
+Speaker-only                 & \tbd & \tbd \\
+Time-only                    & \tbd & \tbd \\
+Speaker + time               & \tbd & \tbd \\
+Speaker + time + paraphrase  & \tbd & \tbd \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Throughput, Concurrency, and Resource Profile}
+
+\begin{table}[H]
+\centering
+\caption{Throughput, concurrency behavior, and resource profile. TBD.}
+\label{tab:throughput}
+\begin{tabularx}{\textwidth}{l X X X X}
+\toprule
+\textbf{Concurrent Sessions} & \textbf{Mean CPU \%} & \textbf{GPU Mem (GB)} & \textbf{RAM (GB)} & \textbf{Drop Rate} \\
+\midrule
+1     & \tbd & \tbd & \tbd & \tbd \\
+4     & \tbd & \tbd & \tbd & \tbd \\
+8     & \tbd & \tbd & \tbd & \tbd \\
+16    & \tbd & \tbd & \tbd & \tbd \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Stability over Long Sessions}
+
+\todo{Report transcript-regression rate, speaker-label-swap rate, and
+session-disconnect rate for meetings of 30 / 60 / 90 minutes. TBD.}

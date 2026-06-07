@@ -1,0 +1,190 @@
+% =============================================================================
+% Chapter 1: Introduction
+% =============================================================================
+
+\chapter{Introduction}
+\label{ch:intro}
+
+Meetings are the backbone of how organizations communicate,
+ yet the tools built to support them have not kept pace with how people actually speak.
+In Egypt, business conversations naturally mix Egyptian Arabic and English within the same sentence.
+This is not a communication problem; it is simply how professionals here talk.
+The problem is that every mainstream meeting assistant on the market either struggles with Arabic entirely,
+forces a fallback to Modern Standard Arabic that nobody uses in a boardroom,
+or processes speech after the meeting is over. None of them can answer the question
+عمر قال ايه لميار في أول الـ stand up meeting?" while the meeting is still running. This thesis builds a system that can.
+
+\section{Problem Statement}
+\label{sec:problem-statement}
+
+We define the problem addressed in this thesis as follows. Given a live
+multilingual meeting (with Egyptian Arabic--English code-switching as the
+primary scenario), we must: (1)~capture audio in real time, (2)~produce a
+low-latency word-by-word transcript that updates visibly to participants, (3)~attribute each spoken segment to a
+distinct speaker, (4)~continuously index the emerging transcript into a
+retrieval-augmented knowledge base, and (5)~answer natural-language questions
+that refer to specific speakers and time windows, e.g., \textit{``هو أيمن قال ايه عن الـ budget اخر عشر دقايق؟''} The combined requirement of
+low-latency streaming, code-switched accuracy, and temporal-speaker-aware
+retrieval is the central technical problem.
+
+\section{Motivation and Significance}
+\label{sec:motivation}
+
+Several real-world pain points motivate this work. Professional meeting
+participants spend an estimated 30--50\% of their cognitive load on
+note-taking and recall, which directly reduces their ability to engage
+with the discussion. Post-meeting, the lack of a structured, speaker-
+attributed transcript causes lost decisions and disputes about
+responsibility. In multilingual regions such as the MENA area,
+general-purpose ASR systems either fail on Egyptian Arabic phonology or
+fall back to Modern Standard Arabic, neither of which matches natural
+code-switched speech.
+
+The significance of solving this problem in a single integrated system is
+threefold. First, it produces measurable productivity gains for individual
+users by removing the need for active note-taking. Second, it produces
+measurable team-level gains by generating a structured, queryable
+artifact from every meeting. Third, by targeting code-switched Egyptian
+Arabic specifically, the work addresses an underserved language community
+in commercial speech technology.
+
+\section{Research Gaps, Questions, and Objectives}
+\label{sec:rqs}
+
+The literature (reviewed in \cref{ch:background}) contains strong solutions
+to most individual sub-problems: large-vocabulary ASR via Whisper-family
+models, streaming ASR with chunk-and-commit policies, speaker
+diarization via Sortformer or similar architectures, and retrieval-
+augmented generation (RAG) over vector stores. However, the integrated
+problem stated in \cref{sec:problem-statement} contains a research gap:
+code-switched Egyptian Arabic ASR with a low-latency stable commit policy
+is not addressed by off-the-shelf systems, and temporal-speaker-aware
+querying of a realtime RAG index is not natively supported by existing
+meeting-assistant tools. The specific research questions addressed in this
+thesis are:
+
+\begin{enumerate}[label=\textbf{RQ\arabic*.}, itemsep=0.4em]
+  \item \textbf{RQ1 (Streaming ASR for code-switched Egyptian Arabic).} To
+  what extent can parameter-efficient fine-tuning (LoRA) of a Whisper-
+  family model, combined with a local-agreement commit policy, produce
+  realtime transcripts whose Word Error Rate (WER) on a held-out
+  code-switched test set is below an operational threshold (TBD) while
+  maintaining sub-second first-token latency?
+  \item \textbf{RQ2 (Speaker attribution and temporal QA).} To what extent
+  does combining speaker-diarization output with a temporal-aware QA agent
+  allow natural-language questions that reference specific speakers and
+  time windows to be answered with relevant evidence (Recall@$k$ TBD)?
+  \item \textbf{RQ3 (Realtime knowledge-base freshness).} What is the end-
+  to-end latency between a spoken utterance and its retrievability via the
+  QA system, and what chunking / topic-windowing strategy minimizes this
+  latency while preserving retrieval quality (MRR TBD)?
+  \item \textbf{RQ4 (System robustness).} Does the integrated system
+  remain stable (no transcript regressions, no speaker label swaps) over
+  sessions of at least 60 minutes of continuous speech, and what is the
+  observed failure mode distribution?
+\end{enumerate}
+
+\subsection{Objectives}
+
+The objectives derived from the research questions are:
+
+\begin{itemize}[itemsep=0.3em]
+  \item \textbf{O1.} Curate a code-switched Egyptian Arabic--English speech
+  corpus with validated transcripts and per-speaker labels.
+  \item \textbf{O2.} Train and validate a LoRA-fine-tuned ASR model that
+  outperforms the off-the-shelf baseline on the curated test set.
+  \item \textbf{O3.} Implement a local-agreement streaming commit policy
+  that produces stable word-by-word output with configurable latency.
+  \item \textbf{O4.} Integrate a pretrained speaker-diarization model with
+  the streaming ASR pipeline to produce speaker-attributed transcripts.
+  \item \textbf{O5.} Implement a realtime RAG pipeline that ingests
+  transcript chunks and supports temporal-speaker-aware retrieval.
+  \item \textbf{O6.} Build and validate the full integrated system and
+  report quantitative evaluation results.
+\end{itemize}
+
+\section{Proposed Solution Overview}
+\label{sec:solution-overview}
+
+The proposed solution, \meetai{}, is a realtime meeting assistant that
+combines: (i)~a fine-tuned streaming ASR model for code-switched Egyptian
+Arabic, (ii)~a local-agreement commit policy that finalizes words when they
+appear in a configurable number of consecutive partial decodes, (iii)~a
+pretrained Sortformer-based streaming speaker-diarization model, (iv)~a
+realtime RAG knowledge base backed by PostgreSQL with the pgvector
+extension, and (v)~a temporal-speaker-aware QA agent that parses natural-
+language time and speaker references into structured retrieval queries. The
+system is exposed through a thin React frontend and a polyglot
+microservices backend (Node.js + Python).
+
+\Cref{fig:high-level} shows the high-level system context. The full
+component architecture is presented in \cref{ch:architecture}.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+  node distance=1.2cm and 1.6cm,
+  every node/.style={font=\small},
+  box/.style={rectangle, draw, rounded corners, minimum width=3.2cm, minimum height=1cm, align=center, fill=blue!5},
+  ext/.style={rectangle, draw, rounded corners, minimum width=3.2cm, minimum height=1cm, align=center, fill=orange!10},
+  arrow/.style={-{Stealth[length=2mm]}, thick}
+]
+\node[ext] (user) {End user\\(browser)};
+\node[box, right=of user] (fe) {React\\Frontend};
+\node[box, right=of fe] (gw) {Node.js\\Gateway};
+\node[box, right=of gw, yshift=0.8cm] (asr) {AI Engine\\(ASR + diarization)};
+\node[box, right=of gw, yshift=-0.8cm] (qa) {QA Service\\(RAG + Gemini)};
+\node[box, below=of gw] (meet) {Meetings\\Service};
+\node[box, left=of meet] (auth) {Auth\\Service};
+\node[box, below=2.6cm of asr] (db) {PostgreSQL\\+ pgvector};
+\node[box, below=2.6cm of qa] (redis) {Redis\\(streams + tokens)};
+
+\draw[arrow] (user) -- (fe);
+\draw[arrow] (fe) -- (gw);
+\draw[arrow] (gw) -- (asr);
+\draw[arrow] (gw) -- (qa);
+\draw[arrow] (gw) -- (meet);
+\draw[arrow] (gw) -- (auth);
+\draw[arrow] (asr) -- (db);
+\draw[arrow] (asr) -- (redis);
+\draw[arrow] (qa) -- (db);
+\draw[arrow] (meet) -- (db);
+\draw[arrow] (auth) -- (redis);
+\end{tikzpicture}
+\caption{High-level \meetai{} system context.}
+\label{fig:high-level}
+\end{figure}
+
+\section{Thesis Organisation}
+\label{sec:thesis-organisation}
+
+The remainder of this thesis is organised as follows.
+
+\begin{description}[itemsep=0.3em,leftmargin=4cm,style=nextline]
+  \item[\Cref{ch:background}] reviews the relevant literature on ASR,
+  speaker diarization, retrieval-augmented generation, and code-switched
+  speech processing, and identifies the research gaps addressed by this
+  thesis.
+  \item[\Cref{ch:requirements}] presents the stakeholder analysis, the
+  functional and non-functional requirements, and the data requirements
+  of the proposed system.
+  \item[\Cref{ch:architecture}] documents the system architecture and
+  component design, including the high-level architecture, sequence
+  diagrams for the key flows, the AI pipeline architecture, and the
+  technology stack.
+  \item[\Cref{ch:ml-methodology}] details the machine-learning
+  methodology, including data preprocessing, the local-agreement
+  streaming commit policy, the LoRA-based ASR fine-tuning strategy, the
+  speaker-diarization integration, and the realtime RAG pipeline.
+  \item[\Cref{ch:experiments}] describes the experimental setup,
+  baselines, evaluation metrics, ablation studies, and statistical
+  significance testing plan.
+  \item[\Cref{ch:results}] presents and discusses the experimental
+  results, including the model evaluation and the system evaluation, and
+  discusses performance breakdown and failure modes.
+  \item[\Cref{ch:conclusion}] concludes with a summary of contributions,
+  critical reflection, and recommendations for future research.
+  \item[\Cref{app:ethics,app:repro,app:genai}] provide the mandatory
+  appendices on AI ethics, reproducibility, and generative-AI
+  disclosure.
+\end{description}
