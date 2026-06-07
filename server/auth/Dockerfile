@@ -4,7 +4,7 @@
 #   docker build -f server/auth/Dockerfile server/
 #
 # Stage 1: install this service's production closure with pnpm.
-FROM node:20-alpine AS deps
+FROM node:22-alpine AS deps
 RUN corepack enable
 WORKDIR /workspace
 
@@ -24,7 +24,7 @@ COPY auth ./auth
 # Stage 2: runtime. Copy the whole installed workspace tree in one shot so
 # pnpm's relative symlinks (node_modules/.pnpm + the @meetai/shared link)
 # all resolve intact.
-FROM node:20-alpine AS runtime
+FROM node:22-alpine AS runtime
 WORKDIR /workspace
 COPY --from=deps /workspace ./
 

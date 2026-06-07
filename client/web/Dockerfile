@@ -1,7 +1,7 @@
 # Production image for the web client: build with Vite, serve static with nginx.
 #
 # Stage 1: build the static bundle.
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 RUN corepack enable
 WORKDIR /app
 
