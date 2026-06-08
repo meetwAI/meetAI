@@ -44,7 +44,7 @@ foreach ($t in $targets) {
 }
 
 Write-Host 'All services appear ready.'
-Write-Host 'Frontend:' 'http://localhost:5173'
+Write-Host 'Frontend:' 'https://localhost:5173'
 Write-Host 'Gateway:' 'http://localhost:4010'
 Write-Host 'Auth:' 'http://localhost:4020'
 Write-Host 'Meeting:' 'http://localhost:4001'

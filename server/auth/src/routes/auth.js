@@ -687,7 +687,6 @@ router.get('/auth/google/callback', (req, res, next) => {
     const redirectUrl = oauthPayload?.redirectUrl || null;
 
     console.log('[auth-service] Callback mode:', oauthMode, 'userId:', calendarUserId, 'redirectUrl:', redirectUrl);
-
     if (error || !oauthPayload) {
       const reason = normalizeText(error?.code || error?.message) || 'oauth_failed';
 

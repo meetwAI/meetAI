@@ -47,7 +47,7 @@ for t in "${targets[@]}"; do
 done
 
 echo "All services appear ready."
-echo "Frontend: http://localhost:5173"
+echo "Frontend: https://localhost:5173"
 echo "Gateway: http://localhost:4010"
 echo "Auth: http://localhost:4020"
 echo "Meeting: http://localhost:4001"

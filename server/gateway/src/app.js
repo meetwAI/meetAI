@@ -22,7 +22,7 @@ const AUTH_SERVICE_URL = requireEnv('AUTH_SERVICE_URL');
 const FRONTEND_ORIGIN = requireEnv('FRONTEND_ORIGIN');
 const AI_SERVICE_WS_URL = process.env.AI_SERVICE_WS_URL || 'ws://localhost:8000/asr';
 const useHttps = process.env.AUTH_USE_HTTPS === 'true';
-const QA_SERVICE_URL = (process.env.QA_SERVICE_URL || 'http://ai-gateway:8000').trim().replace(/\/+$/, '');
+const QA_SERVICE_URL = (process.env.QA_SERVICE_URL || ' http://qa-service:8100').trim().replace(/\/+$/, '');
 // Only skip upstream TLS verification when explicitly opted in (dev with
 // self-signed certs). In prod this stays false so upstream certs are verified.
 const ALLOW_SELF_SIGNED = process.env.GATEWAY_ALLOW_SELF_SIGNED === 'true';
@@ -533,6 +533,13 @@ const updateMeetingQaCache = async ({
 
 const generateAndPersistMOM = async ({ meetingId, userId, authToken }) => {
   try {
+    if (!Number.isInteger(meetingId) || meetingId <= 0) {
+      throw new Error(`Invalid meetingId for MOM generation: ${meetingId}`);
+    }
+    if (!Number.isInteger(userId) || userId <= 0) {
+      throw new Error(`Invalid userId for MOM generation: ${userId}`);
+    }
+
     let speakerMap = null;
     const redisReady = await ensureRedisReady(meetingCacheClient, 'gateway');
     if (redisReady) {
@@ -544,18 +551,32 @@ const generateAndPersistMOM = async ({ meetingId, userId, authToken }) => {
       }
     }
 
+    if (!Object.keys(speakerMap || {}).length) {
+      const payload = await updateMeetingQaCache({
+        meetingId,
+        userId,
+        authToken,
+      });
+      speakerMap = normalizeSpeakerMap(payload?.speakers);
+    }
+
+    const payload = {
+      meeting_id: meetingId,
+      user_id: userId,
+      speaker_map: speakerMap,
+    };
+
+    console.log('[gateway] generating MOM with payload', payload);
+
     const aiRes = await fetch(`${QA_SERVICE_URL}/mom`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        meeting_id: meetingId,
-        user_id: userId,
-        speaker_map: speakerMap,
-      }),
+      body: JSON.stringify(payload),
     });
 
     if (!aiRes.ok) {
-      throw new Error(`QA service returned ${aiRes.status}`);
+      const responseText = await aiRes.text().catch(() => '');
+      throw new Error(`QA service returned ${aiRes.status}: ${responseText || 'empty response'}`);
     }
 
     const { answer } = await aiRes.json();

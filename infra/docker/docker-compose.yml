@@ -295,7 +295,7 @@ services:
       # Frontend API base URL (used by fetchWithAuth).
       VITE_AUTH_URL: ${VITE_AUTH_URL:-https://localhost:4010}
       FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-https://localhost:5173}
-      VITE_AUTH_USE_HTTPS: "false"
+      VITE_AUTH_USE_HTTPS: "true"
     ports:
       - "5173:5173"
     develop:

@@ -5,13 +5,13 @@ import logging
 import re
 from typing import AsyncIterator
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from aiengine.config.settings import settings
 from aiengine.store.pool import create_pool, close_pool
 from aiengine.qa.answer_streamer import AnswerStreamer, StreamError
-from aiengine.qa.models import QARequest, RetrievedChunk
+from aiengine.qa.models import MOMRequest, QARequest, RetrievedChunk
 from aiengine.qa.question_extractor import QuestionExtractor
 from aiengine.qa.retriever import QARetriever
 
@@ -348,16 +348,36 @@ async def qa_endpoint(req: QARequest) -> StreamingResponse:
     )
 
 @app.post("/mom")
-async def mom_endpoint(req: MOMRequest) -> dict:
+async def mom_endpoint(request: Request) -> dict:
     """
     Synchronous JSON endpoint for generating Minutes of Meeting.
     Used internally by the gateway after a session ends.
     """
-    # Log incoming MOM request payload
+    raw_payload: dict | None = None
     try:
-        req_dump = req.model_dump()
+        raw_payload = await request.json()
     except Exception:
-        req_dump = getattr(req, "dict", lambda: {})()
+        raw_payload = None
+
+    if not isinstance(raw_payload, dict):
+        query_req = request.query_params.get("req")
+        if query_req:
+            try:
+                parsed_query_req = json.loads(query_req)
+            except Exception:
+                parsed_query_req = None
+            if isinstance(parsed_query_req, dict):
+                raw_payload = parsed_query_req
+
+    if not isinstance(raw_payload, dict):
+        raise HTTPException(status_code=422, detail="Request body must be a JSON object")
+
+    try:
+        req = MOMRequest.model_validate(raw_payload)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    req_dump = req.model_dump()
     logger.info("POST /mom received: meeting_id=%s user_id=%s", req.meeting_id, req.user_id)
     logger.debug("POST /mom payload: %s", req_dump)
 
@@ -370,11 +390,14 @@ async def mom_endpoint(req: MOMRequest) -> dict:
 
     assert _retriever is not None and _streamer is not None
 
+    logger.info("before speakers",)
     speaker_map = _normalise_speaker_map(req.speaker_map)
+    logger.info("after speakers", speaker_map)
     chunks = await _retriever.retrieve_meeting_chronological(req.meeting_id)
+    logger.info("retrieved %d chunks for MOM generation", len(chunks))
     if speaker_map:
         chunks = _display_map_chunks(chunks, speaker_map)
-
+    logger.info("after display map chunks",)    
     full_parts: list[str] = []
     stream_failed: str | None = None
 
