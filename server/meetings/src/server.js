@@ -193,10 +193,18 @@ const computeDurationSeconds = ({ startTime, endTime }) => {
   return Math.max(0, (effectiveEndMs - startMs) / 1000);
 };
 
+const toSpeakerMapResponse = (speakerMap = {}) => {
+  const normalized = speakerMap && typeof speakerMap === 'object' ? speakerMap : {};
+  return {
+    speakerMap: normalized,
+    speaker_map: normalized,
+  };
+};
+
 const fetchMeetingQaContext = async ({ meetingId, userId }) => {
   const result = await query(
     `SELECT
-      COALESCE(full_transcript->'speakerMap', '{}'::jsonb) AS speaker_map,
+      COALESCE(speaker_map, full_transcript->'speakerMap', '{}'::jsonb) AS speaker_map,
       COALESCE(full_transcript->'participants', '[]'::jsonb) AS participants,
       COALESCE(full_transcript->'lines', '[]'::jsonb) AS lines,
       start_time,
@@ -214,6 +222,7 @@ const fetchMeetingQaContext = async ({ meetingId, userId }) => {
 
   return {
     speakerMap: row.speaker_map,
+    speaker_map: row.speaker_map,
     participants: row.participants,
     lines: row.lines,
     startTime: row.start_time,
@@ -358,7 +367,6 @@ app.post('/meetings', (req, res) => {
     participants,
     speakerMap,
     actionItems: [],
-    messages: [],
     asrStatus: 'idle',
     lines: [],
     bufferTranscription: '',
@@ -367,10 +375,10 @@ app.post('/meetings', (req, res) => {
   };
 
   return query(
-    `INSERT INTO meetings (user_id, summarisation, full_transcript, date, start_time, duration_minutes)
-     VALUES ($1, $2, $3::jsonb, $4, $5, 0)
+    `INSERT INTO meetings (user_id, title, summarisation, full_transcript, speaker_map, date, start_time, duration_minutes)
+     VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7, 0)
      RETURNING id, start_time`,
-    [userId, '', JSON.stringify(transcript), startedAt, startedAt],
+    [userId, title, '', JSON.stringify(transcript), JSON.stringify(speakerMap), startedAt, startedAt],
   )
     .then((result) => {
       const row = result.rows[0];
@@ -402,14 +410,12 @@ app.get('/meetings/dummy', (req, res) => {
     if (!normalized) {
       return null;
     }
-
     const parsed = new Date(normalized);
     if (Number.isNaN(parsed.getTime())) {
       const error = new Error(`Invalid ${label}. Use an ISO-8601 date or timestamp.`);
       error.statusCode = 400;
       throw error;
     }
-
     return parsed;
   };
 
@@ -429,26 +435,24 @@ app.get('/meetings/dummy', (req, res) => {
   const rawLimit = Number(req.query.limit);
   const limit = Number.isInteger(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 100) : 25;
 
-  const whereClauses = ['user_id = $1'];
+  const whereClauses = [];
   const values = [userId];
   let nextParamIndex = 2;
 
   if (filter === 'upcoming') {
-    whereClauses.push('COALESCE(start_time, date) >= NOW()');
-  }
-
-  if (filter === 'previous') {
-    whereClauses.push('COALESCE(end_time, start_time, date) < NOW()');
+    whereClauses.push('COALESCE(m.start_time, m.date) >= NOW()');
+  } else if (filter === 'previous') {
+    whereClauses.push('COALESCE(m.end_time, m.start_time, m.date) < NOW()');
   }
 
   if (fromDate) {
-    whereClauses.push(`COALESCE(start_time, date) >= $${nextParamIndex}`);
+    whereClauses.push(`COALESCE(m.start_time, m.date) >= $${nextParamIndex}`);
     values.push(fromDate.toISOString());
     nextParamIndex += 1;
   }
 
   if (toDate) {
-    whereClauses.push(`COALESCE(start_time, date) <= $${nextParamIndex}`);
+    whereClauses.push(`COALESCE(m.start_time, m.date) <= $${nextParamIndex}`);
     values.push(toDate.toISOString());
     nextParamIndex += 1;
   }
@@ -456,25 +460,33 @@ app.get('/meetings/dummy', (req, res) => {
   const orderDirection = filter === 'upcoming' ? 'ASC' : 'DESC';
   values.push(limit);
 
+  const extraWhere = whereClauses.length ? `AND ${whereClauses.join(' AND ')}` : '';
+
   return query(
     `SELECT
-      id,
-      COALESCE(full_transcript->>'title', CONCAT('Meeting ', id::text)) AS title,
-      TO_CHAR(COALESCE(start_time, date), 'Mon DD, YYYY') AS date,
-      COALESCE(summarisation, '') AS summary,
-      COALESCE(full_transcript->'participants', '[]'::jsonb) AS participants,
-      COALESCE(full_transcript->'speakerMap', '{}'::jsonb) AS speaker_map,
-      COALESCE(full_transcript->'messages', '[]'::jsonb) AS messages,
-      COALESCE(full_transcript->'lines', '[]'::jsonb) AS lines,
-      COALESCE(full_transcript->>'bufferTranscription', '') AS buffer_transcription,
-      COALESCE(full_transcript->>'bufferDiarization', '') AS buffer_diarization,
-      COALESCE(full_transcript->>'asrStatus', 'idle') AS asr_status,
-      COALESCE(full_transcript->>'updatedAt', '') AS updated_at,
-      start_time,
-      end_time
-    FROM meetings
-    WHERE ${whereClauses.join(' AND ')}
-    ORDER BY COALESCE(start_time, date) ${orderDirection}
+      m.id,
+      COALESCE(m.title, m.full_transcript->>'title', CONCAT('Meeting ', m.id::text)) AS title,
+      TO_CHAR(COALESCE(m.start_time, m.date), 'Mon DD, YYYY') AS date,
+      COALESCE(m.summarisation, '') AS summary,
+      COALESCE(m.full_transcript->'participants', '[]'::jsonb) AS participants,
+      COALESCE(m.speaker_map, m.full_transcript->'speakerMap', '{}'::jsonb) AS speaker_map,
+      COALESCE(m.full_transcript->'lines', '[]'::jsonb) AS lines,
+      COALESCE(m.full_transcript->>'bufferTranscription', '') AS buffer_transcription,
+      COALESCE(m.full_transcript->>'bufferDiarization', '') AS buffer_diarization,
+      COALESCE(m.full_transcript->>'asrStatus', 'idle') AS asr_status,
+      COALESCE(m.full_transcript->>'updatedAt', '') AS updated_at,
+      m.start_time,
+      m.end_time,
+      COALESCE(
+        json_agg(json_build_object('id', msg.id, 'role', msg.role, 'content', msg.content, 'date', msg.date)
+          ORDER BY msg.date ASC) FILTER (WHERE msg.id IS NOT NULL),
+        '[]'::json
+      ) AS messages
+    FROM meetings m
+    LEFT JOIN messages msg ON msg.chat_id = m.id
+    WHERE m.user_id = $1 ${extraWhere}
+    GROUP BY m.id
+    ORDER BY COALESCE(m.start_time, m.date) ${orderDirection}
     LIMIT $${nextParamIndex}`,
     values,
   )
@@ -485,7 +497,7 @@ app.get('/meetings/dummy', (req, res) => {
         date: row.date,
         summary: row.summary,
         participants: Array.isArray(row.participants) ? row.participants : [],
-        speakerMap: row.speaker_map && typeof row.speaker_map === 'object' ? row.speaker_map : {},
+        ...toSpeakerMapResponse(row.speaker_map),
         messages: Array.isArray(row.messages) ? row.messages : [],
         lines: Array.isArray(row.lines) ? row.lines : [],
         bufferTranscription: String(row.buffer_transcription || ''),
@@ -515,11 +527,11 @@ app.get('/meetings/recent', (req, res) => {
   return query(
     `SELECT
       id,
-      COALESCE(full_transcript->>'title', CONCAT('Meeting ', id::text)) AS title,
+      COALESCE(title, full_transcript->>'title', CONCAT('Meeting ', id::text)) AS title,
       TO_CHAR(COALESCE(end_time, date), 'Mon DD, YYYY') AS date,
       COALESCE(summarisation, '') AS summary,
       COALESCE(full_transcript->'participants', '[]'::jsonb) AS participants,
-      COALESCE(full_transcript->'speakerMap', '{}'::jsonb) AS speaker_map,
+      COALESCE(speaker_map, full_transcript->'speakerMap', '{}'::jsonb) AS speaker_map,
       COALESCE(duration_minutes, 0) AS duration_minutes,
       start_time,
       end_time
@@ -536,12 +548,11 @@ app.get('/meetings/recent', (req, res) => {
         date: row.date,
         summary: row.summary,
         participants: Array.isArray(row.participants) ? row.participants : [],
-        speakerMap: row.speaker_map && typeof row.speaker_map === 'object' ? row.speaker_map : {},
+        ...toSpeakerMapResponse(row.speaker_map),
         durationMinutes: Number(row.duration_minutes) || 0,
         startTime: row.start_time,
         endTime: row.end_time,
       }));
-
       return res.json(meetings);
     })
     .catch((error) => {
@@ -563,24 +574,30 @@ app.get('/meetings/:meetingId', (req, res) => {
 
   return query(
     `SELECT
-      id,
-      COALESCE(full_transcript->>'title', CONCAT('Meeting ', id::text)) AS title,
-      TO_CHAR(COALESCE(end_time, date), 'Mon DD, YYYY') AS date,
-      COALESCE(summarisation, '') AS summary,
-      COALESCE(full_transcript->'participants', '[]'::jsonb) AS participants,
-      COALESCE(full_transcript->'speakerMap', '{}'::jsonb) AS speaker_map,
-      COALESCE(full_transcript->'messages', '[]'::jsonb) AS messages,
-      COALESCE(full_transcript->'actionItems', '[]'::jsonb) AS action_items,
-      COALESCE(full_transcript->'lines', '[]'::jsonb) AS lines,
-      COALESCE(full_transcript->>'bufferTranscription', '') AS buffer_transcription,
-      COALESCE(full_transcript->>'bufferDiarization', '') AS buffer_diarization,
-      COALESCE(full_transcript->>'asrStatus', 'idle') AS asr_status,
-      COALESCE(full_transcript->>'updatedAt', '') AS updated_at,
-      COALESCE(duration_minutes, 0) AS duration_minutes,
-      start_time,
-      end_time
-    FROM meetings
-    WHERE id = $1 AND user_id = $2
+      m.id,
+      COALESCE(m.title, m.full_transcript->>'title', CONCAT('Meeting ', m.id::text)) AS title,
+      TO_CHAR(COALESCE(m.end_time, m.date), 'Mon DD, YYYY') AS date,
+      COALESCE(m.summarisation, '') AS summary,
+      COALESCE(m.full_transcript->'participants', '[]'::jsonb) AS participants,
+      COALESCE(m.speaker_map, m.full_transcript->'speakerMap', '{}'::jsonb) AS speaker_map,
+      COALESCE(m.full_transcript->'actionItems', '[]'::jsonb) AS action_items,
+      COALESCE(m.full_transcript->'lines', '[]'::jsonb) AS lines,
+      COALESCE(m.full_transcript->>'bufferTranscription', '') AS buffer_transcription,
+      COALESCE(m.full_transcript->>'bufferDiarization', '') AS buffer_diarization,
+      COALESCE(m.full_transcript->>'asrStatus', 'idle') AS asr_status,
+      COALESCE(m.full_transcript->>'updatedAt', '') AS updated_at,
+      COALESCE(m.duration_minutes, 0) AS duration_minutes,
+      m.start_time,
+      m.end_time,
+      COALESCE(
+        json_agg(json_build_object('id', msg.id, 'role', msg.role, 'content', msg.content, 'date', msg.date)
+          ORDER BY msg.date ASC) FILTER (WHERE msg.id IS NOT NULL),
+        '[]'::json
+      ) AS messages
+    FROM meetings m
+    LEFT JOIN messages msg ON msg.chat_id = m.id
+    WHERE m.id = $1 AND m.user_id = $2
+    GROUP BY m.id
     LIMIT 1`,
     [meetingId, userId],
   )
@@ -596,7 +613,7 @@ app.get('/meetings/:meetingId', (req, res) => {
         date: row.date,
         summary: row.summary,
         participants: Array.isArray(row.participants) ? row.participants : [],
-        speakerMap: row.speaker_map && typeof row.speaker_map === 'object' ? row.speaker_map : {},
+        ...toSpeakerMapResponse(row.speaker_map),
         messages: Array.isArray(row.messages) ? row.messages : [],
         actionItems: Array.isArray(row.action_items) ? row.action_items : [],
         lines: Array.isArray(row.lines) ? row.lines : [],
@@ -614,6 +631,7 @@ app.get('/meetings/:meetingId', (req, res) => {
       return res.status(500).json({ message: 'Failed to load meeting.' });
     });
 });
+
 // Append one message to a meeting's transcript.
 //
 // Two modes share this endpoint:
@@ -643,30 +661,31 @@ app.post('/meetings/:meetingId/messages', (req, res) => {
     return handleQaMessage({ req, res, meetingId, userId, question: text });
   }
   const role = req.body?.role === 'assistant' ? 'assistant' : 'user';
-  const message = {
-    id: `msg-${Date.now()}`,
-    role,
-    text,
-    time: new Date().toISOString(),
-  };
 
+  // Verify the meeting exists and belongs to the user before inserting.
   return query(
-    `UPDATE meetings
-     SET full_transcript = jsonb_set(
-       COALESCE(full_transcript, '{}'::jsonb),
-       '{messages}',
-       COALESCE(full_transcript->'messages', '[]'::jsonb) || $1::jsonb,
-       true
-     )
-     WHERE id = $2 AND user_id = $3
-     RETURNING id`,
-    [JSON.stringify([message]), meetingId, userId],
+    `SELECT id FROM meetings WHERE id = $1 AND user_id = $2 LIMIT 1`,
+    [meetingId, userId],
   )
-    .then((result) => {
-      if (!result.rowCount) {
+    .then(async (check) => {
+      if (!check.rowCount) {
         return res.status(404).json({ message: 'Meeting not found.' });
       }
-      return res.status(201).json({ message });
+      const result = await query(
+        `INSERT INTO messages (chat_id, role, content, date)
+         VALUES ($1, $2, $3, NOW())
+         RETURNING id, chat_id, role, content, date`,
+        [meetingId, role, text],
+      );
+      const row = result.rows[0];
+      return res.status(201).json({
+        message: {
+          id: row.id,
+          role: row.role,
+          content: row.content,
+          date: row.date,
+        },
+      });
     })
     .catch((error) => {
       console.error('[meeting-service] failed to append meeting message', error);
@@ -676,30 +695,29 @@ app.post('/meetings/:meetingId/messages', (req, res) => {
 // Append one message to a meeting's transcript — single helper used by both
 // the user-question path and the assistant-answer path of the QA flow.
 const appendMeetingMessage = async ({ meetingId, userId, role, text }) => {
-  const message = {
-    id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    role,
-    text,
-    time: new Date().toISOString(),
-  };
-  const result = await query(
-    `UPDATE meetings
-     SET full_transcript = jsonb_set(
-       COALESCE(full_transcript, '{}'::jsonb),
-       '{messages}',
-       COALESCE(full_transcript->'messages', '[]'::jsonb) || $1::jsonb,
-       true
-     )
-     WHERE id = $2 AND user_id = $3
-     RETURNING id`,
-    [JSON.stringify([message]), meetingId, userId],
+  // Verify ownership first so we can return a 404 if the meeting is missing.
+  const check = await query(
+    `SELECT id FROM meetings WHERE id = $1 AND user_id = $2 LIMIT 1`,
+    [meetingId, userId],
   );
-  if (!result.rowCount) {
+  if (!check.rowCount) {
     const error = new Error('Meeting not found.');
     error.statusCode = 404;
     throw error;
   }
-  return message;
+  const result = await query(
+    `INSERT INTO messages (chat_id, role, content, date)
+     VALUES ($1, $2, $3, NOW())
+     RETURNING id, chat_id, role, content, date`,
+    [meetingId, role, text],
+  );
+  const row = result.rows[0];
+  return {
+    id: row.id,
+    role: row.role,
+    content: row.content,
+    date: row.date,
+  };
 };
 
 // Render a single SSE event into the wire format. We re-emit ``meta``,
@@ -1056,14 +1074,15 @@ app.patch('/meetings/:meetingId/speakers', (req, res) => {
 
   return query(
     `UPDATE meetings
-     SET full_transcript = jsonb_set(
-       COALESCE(full_transcript, '{}'::jsonb),
-       '{speakerMap}',
-       $1::jsonb,
-       true
-     )
+     SET speaker_map = $1::jsonb,
+         full_transcript = jsonb_set(
+           COALESCE(full_transcript, '{}'::jsonb),
+           '{speakerMap}',
+           $1::jsonb,
+           true
+         )
      WHERE id = $2 AND user_id = $3
-     RETURNING full_transcript->'speakerMap' AS speaker_map`,
+     RETURNING speaker_map`,
     [JSON.stringify(speakerMap), meetingId, userId],
   )
     .then((result) => {
@@ -1071,7 +1090,7 @@ app.patch('/meetings/:meetingId/speakers', (req, res) => {
       if (!row) {
         return res.status(404).json({ message: 'Meeting not found.' });
       }
-      return res.json({ ok: true, speakerMap: row.speaker_map || {} });
+      return res.json({ ok: true, ...toSpeakerMapResponse(row.speaker_map) });
     })
     .catch((error) => {
       console.error('[meeting-service] failed to save speaker map', error);
@@ -1098,14 +1117,9 @@ app.patch('/meetings/:meetingId/title', (req, res) => {
 
   return query(
     `UPDATE meetings
-     SET full_transcript = jsonb_set(
-       COALESCE(full_transcript, '{}'::jsonb),
-       '{title}',
-       to_jsonb($1::text),
-       true
-     )
+     SET title = $1
      WHERE id = $2 AND user_id = $3
-     RETURNING id, COALESCE(full_transcript->>'title', CONCAT('Meeting ', id::text)) AS title`,
+     RETURNING id, COALESCE(title, full_transcript->>'title', CONCAT('Meeting ', id::text)) AS title`,
     [title, meetingId, userId],
   )
     .then((result) => {
@@ -1207,17 +1221,12 @@ app.post('/meetings/:meetingId/complete', (req, res) => {
            0,
            CEIL(EXTRACT(EPOCH FROM (NOW() - COALESCE(start_time, date))) / 60.0)::INT
          ),
-         full_transcript = jsonb_set(
-           COALESCE(full_transcript, '{}'::jsonb),
-           '{durationMinutes}',
-           to_jsonb(
-             GREATEST(
-               0,
-               CEIL(EXTRACT(EPOCH FROM (NOW() - COALESCE(start_time, date))) / 60.0)::INT
-             )
-           ),
-           true
-         )
+         full_transcript = COALESCE(full_transcript, '{}'::jsonb) || jsonb_build_object(
+            'durationMinutes', to_jsonb(GREATEST(0, CEIL(EXTRACT(EPOCH FROM (NOW() - COALESCE(start_time, date))) / 60.0)::INT)),
+            'asrStatus', to_jsonb('done'::text),
+            'bufferTranscription', to_jsonb(''::text),
+            'bufferDiarization', to_jsonb(''::text)
+          )
      WHERE id = $1 AND user_id = $2
      RETURNING id, start_time, end_time, duration_minutes`,
     [meetingId, userId],

@@ -13,3 +13,5 @@ export const closePreviousMeetingsSidebar = () => {
 export const togglePreviousMeetingsSidebar = () => {
 	sidebarState.value = !sidebarState.value;
 };
+
+export const activeMeetingIdState = signal(null);

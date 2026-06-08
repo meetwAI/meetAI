@@ -5,6 +5,7 @@ import './MainLayout.css';
 import { getSocket, connectSocket } from '../lib/socket';
 import { fetchWithAuth } from '../lib/http';
 import { Menu, Mic, Plus } from 'lucide-react';
+import { activeMeetingIdState } from '../state';
 
 const MainLayout = () => {
     const navigate = useNavigate();
@@ -134,6 +135,7 @@ const MainLayout = () => {
             }
         }
         activeMeetingIdRef.current = null;
+        activeMeetingIdState.value = null;
         cumulativeLinesRef.current = [];
         segmentLinesRef.current = [];
         setCaptureState('idle');
@@ -168,6 +170,7 @@ const MainLayout = () => {
                 throw new Error('Failed to create meeting.');
             }
             activeMeetingIdRef.current = meetingId;
+            activeMeetingIdState.value = meetingId;
             queryClient.setQueryData(['meeting', String(meetingId)], {
                 id: meetingId,
                 title: `Meeting ${meetingId}`,

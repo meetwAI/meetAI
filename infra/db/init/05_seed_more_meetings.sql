@@ -11,11 +11,12 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM meetings
     WHERE user_id = admin_id
-      AND COALESCE(full_transcript->>'title', '') = 'Design Review — Dashboard'
+      AND COALESCE(title, full_transcript->>'title', '') = 'Design Review — Dashboard'
   ) THEN
-    INSERT INTO meetings (user_id, summarisation, full_transcript, date, start_time, duration_minutes, end_time)
+    INSERT INTO meetings (user_id, title, summarisation, full_transcript, date, start_time, duration_minutes, end_time)
     VALUES (
       admin_id,
+      'Design Review — Dashboard',
       'Validated hierarchy, defined data density guardrails.',
       jsonb_build_object(
         'title', 'Design Review — Dashboard',
@@ -34,11 +35,12 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM meetings
     WHERE user_id = admin_id
-      AND COALESCE(full_transcript->>'title', '') = 'Customer Feedback Debrief'
+      AND COALESCE(title, full_transcript->>'title', '') = 'Customer Feedback Debrief'
   ) THEN
-    INSERT INTO meetings (user_id, summarisation, full_transcript, date, start_time, duration_minutes, end_time)
+    INSERT INTO meetings (user_id, title, summarisation, full_transcript, date, start_time, duration_minutes, end_time)
     VALUES (
       admin_id,
+      'Customer Feedback Debrief',
       'Top themes: faster search, export options, ownership clarity.',
       jsonb_build_object(
         'title', 'Customer Feedback Debrief',
@@ -57,11 +59,12 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM meetings
     WHERE user_id = admin_id
-      AND COALESCE(full_transcript->>'title', '') = 'Sprint Planning'
+      AND COALESCE(title, full_transcript->>'title', '') = 'Sprint Planning'
   ) THEN
-    INSERT INTO meetings (user_id, summarisation, full_transcript, date, start_time, duration_minutes, end_time)
+    INSERT INTO meetings (user_id, title, summarisation, full_transcript, date, start_time, duration_minutes, end_time)
     VALUES (
       admin_id,
+      'Sprint Planning',
       'Locked sprint scope and clarified dependencies for infra and frontend.',
       jsonb_build_object(
         'title', 'Sprint Planning',

@@ -32,9 +32,10 @@ BEGIN
     WHERE m.user_id = admin_id
       AND m.summarisation = 'Aligned on onboarding scope and confirmed launch risks.'
   ) THEN
-    INSERT INTO meetings (user_id, summarisation, full_transcript, date)
+    INSERT INTO meetings (user_id, title, summarisation, full_transcript, date)
     VALUES (
       admin_id,
+      'Weekly Product Sync',
       'Aligned on onboarding scope and confirmed launch risks.',
       jsonb_build_object(
         'title', 'Weekly Product Sync',

@@ -4,11 +4,15 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useSignals } from '@preact/signals-react/runtime';
 import { fetchWithAuth } from '../lib/http';
 import moment from 'moment';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import rehypeSanitize from 'rehype-sanitize';
 import {
   closePreviousMeetingsSidebar,
   openPreviousMeetingsSidebar,
   sidebarState,
   togglePreviousMeetingsSidebar,
+  activeMeetingIdState,
 } from '../state';
 import { parseSseStream } from '../lib/sse'
 const normalizeTranscriptText = (value) => String(value || '').trim().replace(/\s+/g, ' ');
@@ -130,8 +134,8 @@ const buildCalendarMeeting = (event, index) => {
   const meetLink = resolveMeetLink(event);
   const participants = Array.isArray(event?.attendees)
     ? event.attendees
-        .map((attendee) => normalizeCalendarText(attendee?.displayName || attendee?.email))
-        .filter(Boolean)
+      .map((attendee) => normalizeCalendarText(attendee?.displayName || attendee?.email))
+      .filter(Boolean)
     : [];
 
   return {
@@ -202,7 +206,9 @@ const buildSpeakerPayload = (names = []) => {
 const deriveSpeakerBaseList = (meeting) => {
   const speakerMap = meeting?.speakerMap && typeof meeting.speakerMap === 'object'
     ? meeting.speakerMap
-    : null;
+    : meeting?.speaker_map && typeof meeting.speaker_map === 'object'
+      ? meeting.speaker_map
+      : null;
 
   if (speakerMap) {
     const fromMap = Array.from({ length: MAX_SPEAKER_COUNT }, (_, index) => {
@@ -257,6 +263,7 @@ export default function PreviousMeetings() {
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
   const [isTranscriptPanelOpen, setIsTranscriptPanelOpen] = useState(true);
+  const [isSummaryOpen, setIsSummaryOpen] = useState(true);
   const [isEditingSpeakers, setIsEditingSpeakers] = useState(false);
   const [speakerDrafts, setSpeakerDrafts] = useState(Array(MAX_SPEAKER_COUNT).fill(''));
   const [isSavingSpeakers, setIsSavingSpeakers] = useState(false);
@@ -483,7 +490,11 @@ export default function PreviousMeetings() {
       date: meeting.date,
       summary: meeting.summary,
       participants: Array.isArray(meeting.participants) ? meeting.participants : [],
-      speakerMap: meeting.speakerMap && typeof meeting.speakerMap === 'object' ? meeting.speakerMap : {},
+      speakerMap: meeting.speakerMap && typeof meeting.speakerMap === 'object'
+        ? meeting.speakerMap
+        : meeting.speaker_map && typeof meeting.speaker_map === 'object'
+          ? meeting.speaker_map
+          : {},
       messages: Array.isArray(meeting.messages) ? meeting.messages : [],
       actionItems: Array.isArray(meeting.actionItems) ? meeting.actionItems : [],
       lines: Array.isArray(meeting.lines) ? meeting.lines : [],
@@ -491,6 +502,8 @@ export default function PreviousMeetings() {
       bufferDiarization: String(meeting.bufferDiarization || ''),
       asrStatus: String(meeting.asrStatus || 'idle'),
       updatedAt: String(meeting.updatedAt || ''),
+      startTime: meeting.startTime || meeting.start_time || null,
+      endTime: meeting.endTime || meeting.end_time || null,
     }));
 
     if (!routeMeeting) {
@@ -503,7 +516,11 @@ export default function PreviousMeetings() {
       date: routeMeeting.date,
       summary: routeMeeting.summary,
       participants: Array.isArray(routeMeeting.participants) ? routeMeeting.participants : [],
-      speakerMap: routeMeeting.speakerMap && typeof routeMeeting.speakerMap === 'object' ? routeMeeting.speakerMap : {},
+      speakerMap: routeMeeting.speakerMap && typeof routeMeeting.speakerMap === 'object'
+        ? routeMeeting.speakerMap
+        : routeMeeting.speaker_map && typeof routeMeeting.speaker_map === 'object'
+          ? routeMeeting.speaker_map
+          : {},
       messages: Array.isArray(routeMeeting.messages) ? routeMeeting.messages : [],
       actionItems: Array.isArray(routeMeeting.actionItems) ? routeMeeting.actionItems : [],
       lines: Array.isArray(routeMeeting.lines) ? routeMeeting.lines : [],
@@ -511,6 +528,8 @@ export default function PreviousMeetings() {
       bufferDiarization: String(routeMeeting.bufferDiarization || ''),
       asrStatus: String(routeMeeting.asrStatus || 'idle'),
       updatedAt: String(routeMeeting.updatedAt || ''),
+      startTime: routeMeeting.startTime || routeMeeting.start_time || null,
+      endTime: routeMeeting.endTime || routeMeeting.end_time || null,
     };
 
     const hasRouteMeeting = baseMeetings.some((meeting) => String(meeting.id) === String(routeNormalized.id));
@@ -608,6 +627,8 @@ export default function PreviousMeetings() {
   );
 
   const isCalendarEventSelected = Boolean(selectedMeeting?.isCalendarEvent);
+  const activeRecordingId = activeMeetingIdState.value;
+  const isMeetingRealtime = selectedMeeting && String(selectedMeeting.id) === String(activeRecordingId);
 
   useEffect(() => {
     if (!selectedMeeting || selectedMeeting.isCalendarEvent) {
@@ -681,10 +702,9 @@ export default function PreviousMeetings() {
 
     // For realtime meetings (actively recording) sort by end time so partial
     // chunks stream in the right order. For completed meetings sort by start.
-    const isRealtime = selectedMeeting.asrStatus !== 'idle' && selectedMeeting.asrStatus !== 'done';
     const lines = rawLines.slice().sort((a, b) => {
-      const aVal = isRealtime ? (a?.end ?? a?.start) : (a?.start ?? a?.end);
-      const bVal = isRealtime ? (b?.end ?? b?.start) : (b?.start ?? b?.end);
+      const aVal = isMeetingRealtime ? (a?.end ?? a?.start) : (a?.start ?? a?.end);
+      const bVal = isMeetingRealtime ? (b?.end ?? b?.start) : (b?.start ?? b?.end);
       if (aVal == null && bVal == null) return 0;
       if (aVal == null) return 1;
       if (bVal == null) return -1;
@@ -767,7 +787,7 @@ export default function PreviousMeetings() {
     }
 
     return { groups, bufferTranscription, bufferDiarization };
-  }, [selectedMeeting]);
+  }, [selectedMeeting, isMeetingRealtime]);
 
   useEffect(() => {
     if (!selectedMeeting) {
@@ -803,7 +823,7 @@ export default function PreviousMeetings() {
     },
     [meetingid, queryClient],
   );
-const appendMessageToCache = useCallback(
+  const appendMessageToCache = useCallback(
     (meetingId, message) => {
       mutateMessagesInCache(meetingId, (messages) => [...messages, message]);
     },
@@ -872,14 +892,15 @@ const appendMessageToCache = useCallback(
     const meetingId = selectedMeeting.id;
     const now = new Date().toISOString();
 
+    // Optimistic user message — use the new table shape (content + date)
     const localUserId = `local-user-${Date.now()}`;
     const localAssistantId = `local-assistant-${Date.now()}`;
 
     const optimisticUser = {
       id: localUserId,
       role: 'user',
-      text: content,
-      time: now,
+      content: content,
+      date: now,
     };
 
     appendMessageToCache(meetingId, optimisticUser);
@@ -889,8 +910,8 @@ const appendMessageToCache = useCallback(
       const streamingAssistant = {
         id: localAssistantId,
         role: 'assistant',
-        text: '',
-        time: now,
+        content: '',
+        date: now,
         streaming: true,
       };
       appendMessageToCache(meetingId, streamingAssistant);
@@ -956,8 +977,8 @@ const appendMessageToCache = useCallback(
             replaceMessageInCache(meetingId, (m) => m.id === localAssistantId, {
               id: localAssistantId,
               role: 'assistant',
-              text: streamedText,
-              time: now,
+              content: streamedText,
+              date: now,
               streaming: true,
             });
             continue;
@@ -987,8 +1008,8 @@ const appendMessageToCache = useCallback(
           replaceMessageInCache(meetingId, (m) => m.id === localAssistantId, {
             id: localAssistantId,
             role: 'assistant',
-            text: `[error] ${sawError}`,
-            time: now,
+            content: `[error] ${sawError}`,
+            date: now,
             streaming: false,
             error: true,
           });
@@ -999,8 +1020,8 @@ const appendMessageToCache = useCallback(
             replaceMessageInCache(meetingId, (m) => m.id === localAssistantId && m.streaming, {
               id: localAssistantId,
               role: 'assistant',
-              text: finalAnswer,
-              time: now,
+              content: finalAnswer,
+              date: now,
               streaming: false,
             });
           } else {
@@ -1014,8 +1035,8 @@ const appendMessageToCache = useCallback(
         replaceMessageInCache(meetingId, (m) => m.id === localAssistantId, {
           id: localAssistantId,
           role: 'assistant',
-          text: '[error] Could not reach the service.',
-          time: new Date().toISOString(),
+          content: '[error] Could not reach the service.',
+          date: new Date().toISOString(),
           streaming: false,
           error: true,
         });
@@ -1134,7 +1155,7 @@ const appendMessageToCache = useCallback(
           if (String(meeting.id) !== String(selectedMeeting.id)) {
             return meeting;
           }
-          return { ...meeting, speakerMap: speakerMapValue };
+          return { ...meeting, speakerMap: speakerMapValue, speaker_map: speakerMapValue };
         });
       });
 
@@ -1143,7 +1164,7 @@ const appendMessageToCache = useCallback(
           if (!current || String(current.id) !== String(selectedMeeting.id)) {
             return current;
           }
-          return { ...current, speakerMap: speakerMapValue };
+          return { ...current, speakerMap: speakerMapValue, speaker_map: speakerMapValue };
         });
       }
 
@@ -1163,7 +1184,7 @@ const appendMessageToCache = useCallback(
   }, [isSavingSpeakers, meetingid, queryClient, selectedMeeting, speakerDrafts, speakerSlotCount]);
 
   const handleConnectCalendar = () => {
-    
+
     const connectBase = API_URL || '';
     const currentUrl = window.location.pathname + window.location.search;
     const redirectParam = encodeURIComponent(currentUrl);
@@ -1325,7 +1346,6 @@ const appendMessageToCache = useCallback(
                 </div>
                 <span className="meeting-date">{moment(meeting.date).format('DD-MMM-YYYY')}</span>
               </div>
-              <p className="meeting-summary">{meeting.summary}</p>
               <div className="meeting-meta">
                 <span>{meeting.participants.length} participants</span>
                 <span>View conversation</span>
@@ -1440,30 +1460,16 @@ const appendMessageToCache = useCallback(
                         <>
                           <button
                             type="button"
+                            className="meeting-transcript-toggle"
                             onClick={handleSaveSpeakers}
                             disabled={isSavingSpeakers}
                           >
                             {isSavingSpeakers ? 'Saving...' : 'Save'}
                           </button>
-                          {speakerSlotCount < MAX_SPEAKER_COUNT && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const nextCount = Math.min(MAX_SPEAKER_COUNT, speakerSlotCount + 1);
-                                const nextDrafts = buildSpeakerDrafts(speakerDrafts, nextCount);
-                                const meetingKey = String(selectedMeeting.id);
-                                speakerDraftsByMeetingRef.current.set(meetingKey, nextDrafts);
-                                speakerSlotCountByMeetingRef.current.set(meetingKey, nextCount);
-                                setSpeakerSlotCount(nextCount);
-                                setSpeakerDrafts(nextDrafts);
-                              }}
-                              disabled={isSavingSpeakers}
-                            >
-                              Add speaker
-                            </button>
-                          )}
+
                           <button
                             type="button"
+                            className="meeting-transcript-toggle"
                             onClick={() => {
                               setIsEditingSpeakers(false);
                               const meetingKey = String(selectedMeeting.id);
@@ -1497,6 +1503,7 @@ const appendMessageToCache = useCallback(
                       ) : (
                         <button
                           type="button"
+                          className="meeting-transcript-toggle"
                           onClick={() => setIsEditingSpeakers(true)}
                         >
                           Edit speakers
@@ -1569,16 +1576,43 @@ const appendMessageToCache = useCallback(
             {speakerSaveError && <p className="recap-summary">{speakerSaveError}</p>}
             {deleteError && <p className="recap-summary">{deleteError}</p>}
 
-            <div className="meeting-detail-summary">
-              <h4>{isCalendarEventSelected ? 'Details' : 'Summary'}</h4>
-              <p>{selectedMeeting.summary || (isCalendarEventSelected ? 'No details available.' : '')}</p>
-              {isCalendarEventSelected && calendarTimeRange && (
-                <p className="meeting-calendar-detail">{calendarTimeRange}</p>
-              )}
-              {isCalendarEventSelected && selectedMeeting.location && (
-                <p className="meeting-calendar-detail">Location: {selectedMeeting.location}</p>
-              )}
-            </div>
+            {selectedMeeting.summary && (
+
+              <div className="meeting-detail-summary">
+                <div className="summary-row">
+                  <h4>{isCalendarEventSelected ? 'Details' : 'Summary'}</h4>
+
+                  <button
+                    type="button"
+                    className="meeting-transcript-toggle summary-toggle"
+                    aria-expanded={isSummaryOpen}
+                    onClick={() => setIsSummaryOpen((v) => !v)}
+                  >
+                    {isSummaryOpen ? 'Hide' : 'Show'}
+                  </button>
+
+                </div>
+
+                <div className={`summary-content${isSummaryOpen ? '' : ' collapsed'}`}>
+                  {selectedMeeting.summary ? (
+                    <div className="summary-markdown">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>
+                        {selectedMeeting.summary}
+                      </ReactMarkdown>
+                    </div>
+                  ) : (
+                    isCalendarEventSelected ? <p>No details available.</p> : <p />
+                  )}
+                  {isCalendarEventSelected && calendarTimeRange && (
+                    <p className="meeting-calendar-detail">{calendarTimeRange}</p>
+                  )}
+                  {isCalendarEventSelected && selectedMeeting.location && (
+                    <p className="meeting-calendar-detail">Location: {selectedMeeting.location}</p>
+                  )}
+                </div>
+              </div>
+            )
+            }
 
             {!!selectedMeeting.actionItems?.length && (
               <div className="meeting-detail-summary">
@@ -1594,23 +1628,28 @@ const appendMessageToCache = useCallback(
             {!isCalendarEventSelected ? (
               <>
                 <div className="meeting-messages">
-                  {selectedMeeting.messages.map((message) => (
+                  {selectedMeeting.messages.map((message) => {
+                    // Support both new table shape (content + date) and legacy (text + time)
+                    const displayText = message.content ?? message.text ?? '';
+                    const displayTime = message.date ?? message.time ?? '';
+                    return (
                     <div
                       key={message.id}
                       className={`message-row ${message.role === 'assistant' ? 'assistant' : 'user'}`}
                     >
-                     <div
-                    className={`message-bubble${message.streaming ? ' streaming' : ''}${message.error ? ' error' : ''
-                      }`}
-                  >
-                    <p>
-                      {message.text}
-                      {message.streaming ? <span className="cursor-blink">▍</span> : null}
-                    </p>
-                        <span className="message-time">{message.time ? moment(message.time).format('DD-MMM-YYYY HH:mm') : ''}</span>
+                      <div
+                        className={`message-bubble${message.streaming ? ' streaming' : ''}${message.error ? ' error' : ''
+                          }`}
+                      >
+                        <p>
+                          {displayText}
+                          {message.streaming ? <span className="cursor-blink">▍</span> : null}
+                        </p>
+                        <span className="message-time">{displayTime ? moment(displayTime).format('DD-MMM-YYYY HH:mm') : ''}</span>
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
 
                 <div className="meeting-input">
@@ -1629,29 +1668,29 @@ const appendMessageToCache = useCallback(
                       {calendarConnected && <button type="button">Schedule follow-up</button>}
                     </div>
                   )
-                  
+
                   }
                   {/* --- NEW DROPDOWN TOGGLE --- */}
-              <div className="message-mode-toggle">
-                <select
-                  value={messageMode}
-                  onChange={(e) => setMessageMode(e.target.value)}
-                  aria-label="Message Mode"
-                  style={{
-                    border: 'none',
-                    background: 'transparent',
-                    color: 'var(--text-secondary, #666)',
-                    outline: 'none',
-                    cursor: 'pointer',
-                    padding: '4px',
-                    marginRight: '8px',
-                    fontSize: '0.9rem'
-                  }}
-                >
-                <option value="qa">Ask QA</option>
-                  <option value="note">Add Note</option>
-                </select>
-              </div>
+                  <div className="message-mode-toggle">
+                    <select
+                      value={messageMode}
+                      onChange={(e) => setMessageMode(e.target.value)}
+                      aria-label="Message Mode"
+                      style={{
+                        border: 'none',
+                        background: 'transparent',
+                        color: 'var(--text-secondary, #666)',
+                        outline: 'none',
+                        cursor: 'pointer',
+                        padding: '4px',
+                        marginRight: '8px',
+                        fontSize: '0.9rem'
+                      }}
+                    >
+                      <option value="qa">Ask QA</option>
+                      <option value="note">Add Note</option>
+                    </select>
+                  </div>
                   <input
                     type="text"
                     placeholder={messageMode === 'qa' ? "Ask a question about this meeting..." : "Type a note to save..."}
@@ -1731,7 +1770,7 @@ const appendMessageToCache = useCallback(
                           {group.text}
                           {isLastGroup &&
                             bufferParts.map((part, idx) => (
-                              <span className="meeting-transcript-buffer-inline" key={`buffer-${idx}`}>
+                              <span className={isMeetingRealtime ? "meeting-transcript-buffer-inline" : ""} key={`buffer-${idx}`}>
                                 {(group.text || idx > 0) ? ' ' : ''}{part}
                               </span>
                             ))}

@@ -344,19 +344,34 @@
 	border: 1px solid rgb(56 189 248 / 45%);
 	background: rgb(56 189 248 / 16%);
 	color: #f8fafc;
-	padding: 0.4rem 0.75rem;
-	font-size: 0.82rem;
+	padding: 0.35rem 0.65rem;
+	font-size: 0.76rem;
 	font-weight: 600;
 	cursor: pointer;
 	align-self: start;
+	transition: background-color 0.18s ease, border-color 0.18s ease;
+}
+
+.meeting-transcript-close:hover,
+.meeting-transcript-open:hover,
+.meeting-transcript-toggle:hover {
+	background: rgb(56 189 248 / 26%);
+	border-color: rgb(56 189 248 / 60%);
+}
+
+.meeting-transcript-close:disabled,
+.meeting-transcript-open:disabled,
+.meeting-transcript-toggle:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
 }
 
 .meeting-transcript-toggle {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	height: 40px;
-	padding: 0 0.85rem;
+	height: 30px;
+	padding: 0 0.75rem;
 	align-self: center;
 }
 
@@ -551,20 +566,21 @@
 	position: relative;
 }
 
+
 .meeting-actions-trigger {
-	width: 40px;
-	height: 40px;
+	width: 32px;
+	height: 32px;
 	display: grid;
 	place-items: center;
-	font-size: 1.25rem;
+	font-size: 1rem;
 	line-height: 1;
-	border-radius: 10px;
-	background: rgb(15 23 42 / 72%);
-	border: 1px solid rgb(56 189 248 / 35%);
+	border-radius: 8px;
+	background: rgb(56 189 248 / 16%);
+	border: 1px solid rgb(56 189 248 / 45%);
 	color: #f8fafc;
 	padding: 0;
+	transition: background-color 0.18s ease, border-color 0.18s ease;
 }
-
 .meeting-actions-trigger:hover {
 	background: rgb(56 189 248 / 20%);
 	border-color: rgb(56 189 248 / 60%);
@@ -609,6 +625,33 @@
 .meeting-detail-summary h4 {
 	margin: 0 0 8px;
 	font-size: 1rem;
+}
+
+.summary-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+}
+
+.summary-toggle {
+	height: 30px;
+	padding: 0 0.6rem;
+	font-size: 0.78rem;
+	align-self: center;
+}
+
+.summary-content {
+	overflow: hidden;
+	max-height: 500px;
+	opacity: 1;
+	transition: max-height 0.28s ease, opacity 0.22s ease;
+}
+
+.summary-content.collapsed {
+	max-height: 0;
+	opacity: 0;
+	transition: max-height 0.28s ease, opacity 0.22s ease;
 }
 
 .meeting-detail-summary p {
@@ -938,4 +981,38 @@
 	.meeting-filter-row {
 		grid-template-columns: 1fr;
 	}
+}
+
+/* Scrollbar customization for PreviousMeetings */
+.meeting-cards::-webkit-scrollbar,
+.meeting-messages::-webkit-scrollbar,
+.meeting-transcript-body::-webkit-scrollbar {
+	width: 5px;
+	height: 5px;
+}
+
+.meeting-cards::-webkit-scrollbar-track,
+.meeting-messages::-webkit-scrollbar-track,
+.meeting-transcript-body::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+.meeting-cards::-webkit-scrollbar-thumb,
+.meeting-messages::-webkit-scrollbar-thumb,
+.meeting-transcript-body::-webkit-scrollbar-thumb {
+	background: rgba(148, 163, 184, 0.15);
+	border-radius: 999px;
+}
+
+.meeting-cards::-webkit-scrollbar-thumb:hover,
+.meeting-messages::-webkit-scrollbar-thumb:hover,
+.meeting-transcript-body::-webkit-scrollbar-thumb:hover {
+	background: rgba(148, 163, 184, 0.35);
+}
+
+.meeting-cards,
+.meeting-messages,
+.meeting-transcript-body {
+	scrollbar-width: thin;
+	scrollbar-color: rgba(148, 163, 184, 0.15) transparent;
 }

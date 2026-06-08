@@ -1,7 +1,13 @@
 ALTER TABLE meetings
+  ADD COLUMN IF NOT EXISTS title TEXT,
   ADD COLUMN IF NOT EXISTS start_time TIMESTAMP,
   ADD COLUMN IF NOT EXISTS duration_minutes INT,
-  ADD COLUMN IF NOT EXISTS end_time TIMESTAMP;
+  ADD COLUMN IF NOT EXISTS end_time TIMESTAMP,
+  ADD COLUMN IF NOT EXISTS speaker_map JSONB;
+
+UPDATE meetings
+SET title = COALESCE(title, full_transcript->>'title', CONCAT('Meeting ', id::text))
+WHERE title IS NULL OR title = '';
 
 UPDATE meetings
 SET

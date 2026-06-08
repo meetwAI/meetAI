@@ -292,7 +292,6 @@ services:
     environment:
       CHOKIDAR_USEPOLLING: "true"
       HOST: 0.0.0.0
-      # Frontend API base URL (used by fetchWithAuth).
       VITE_AUTH_URL: ${VITE_AUTH_URL:-https://localhost:4010}
       FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-https://localhost:5173}
       VITE_AUTH_USE_HTTPS: "true"
@@ -312,8 +311,9 @@ services:
       gateway:
         condition: service_healthy
     volumes:
-      - ../../client/web:/app
-      - /app/node_modules
+      # 1. ❌ REMOVED: - ../../client/web:/app (Compose watch handles this now!)
+      # 2. ❌ REMOVED: - /app/node_modules (No longer needed since host files aren't stomping on /app)
+      # 3. KEEP: Only mount the specific certificates needed for HTTPS
       - ../../localhost.pem:/app/localhost.pem:ro
       - ../../localhost-key.pem:/app/localhost-key.pem:ro
     restart: unless-stopped

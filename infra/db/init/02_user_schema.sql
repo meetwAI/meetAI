@@ -81,8 +81,10 @@ END$$;
 CREATE TABLE IF NOT EXISTS meetings (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title TEXT,
     summarisation TEXT,
     full_transcript JSONB,
+    speaker_map JSONB,
     date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
