@@ -11,3 +11,5 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 
 CREATE INDEX IF NOT EXISTS messages_chat_id_date_idx ON messages (chat_id, date);
+
+ALTER TABLE messages DROP CONSTRAINT messages_chat_id_fkey;
