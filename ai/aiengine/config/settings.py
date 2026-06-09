@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     EMBEDDINGS_REQUIRE_GPU: bool = Field(default=True)
 
 
-    REDIS_URL: str = Field(default="redis://localhost:6379/0")
+    REDIS_URL: str = Field(default="redis://0.0.0.0:6379/0")
     REDIS_STREAM_MAXLEN: int = Field(default=5000)
 
     WHISPER_LANGUAGE: str = Field(default="en")
@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     GEMINI_MODEL: str = Field(default="gemini-2.5-flash")
     MOM_MODEL: str = Field(default="gemma-4-31b-it")
 
-    DATABASE_URL: str = Field(default="postgresql://meetai:meetai_pass@localhost:5433/meetai_dev")
+    DATABASE_URL: str = Field(default="postgresql://meetai:meetai_pass@0.0.0.0:5433/meetai_dev")
 
     EMBED_SERVICE_URL: str | None = Field(default=None)
     EMBEDDER_PORT: int = Field(default=8200)
@@ -62,6 +62,13 @@ class Settings(BaseSettings):
     DEFAULT_CHUNK_WEIGHT: float = Field(default=0.7)
     DEFAULT_TOPIC_WEIGHT: float = Field(default=0.3)
 
+    HF_TOKEN: str = Field(default="")
+
+
+    QA_MEMORY_ENABLED: bool = Field(default=True)
+    QA_MEMORY_MAX_TURNS: int = Field(default=10)
+    QA_MEMORY_TTL_SECONDS: int = Field(default=3600)
+    
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

@@ -14,7 +14,7 @@ echo "Bringing up containers (build if needed)..."
 docker compose -f "$COMPOSE_FILE" up --build -d
 
 # auth-service listens on HTTPS by default (see compose: AUTH_USE_HTTPS=true).
-# Mirror that here so curl picks the right scheme; `-k` skips localhost cert
+# Mirror that here so curl picks the right scheme; `-k` skips 0.0.0.0 cert
 # validation since we ship a self-signed pair.
 auth_scheme="https"
 if [ "${AUTH_USE_HTTPS:-true}" != "true" ]; then
@@ -22,9 +22,9 @@ if [ "${AUTH_USE_HTTPS:-true}" != "true" ]; then
 fi
 
 targets=(
-  "http://localhost:4010/health"
-  "${auth_scheme}://localhost:4020/health"
-  "http://localhost:4001/health"
+  "http://0.0.0.0:4010/health"
+  "${auth_scheme}://0.0.0.0:4020/health"
+  "http://0.0.0.0:4001/health"
 )
 start=$(date +%s)
 
@@ -47,7 +47,7 @@ for t in "${targets[@]}"; do
 done
 
 echo "All services appear ready."
-echo "Frontend: https://localhost:5173"
-echo "Gateway: http://localhost:4010"
-echo "Auth: http://localhost:4020"
-echo "Meeting: http://localhost:4001"
+echo "Frontend: https://0.0.0.0:5173"
+echo "Gateway: http://0.0.0.0:4010"
+echo "Auth: http://0.0.0.0:4020"
+echo "Meeting: http://0.0.0.0:4001"

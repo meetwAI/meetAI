@@ -22,10 +22,11 @@ export default defineConfig({
   ],
   server: {
     https: useHttps ? {
-      key: fs.readFileSync('./localhost-key.pem'),
-      cert: fs.readFileSync('./localhost.pem'),
+      key: fs.readFileSync('./0.0.0.0-key.pem'),
+      cert: fs.readFileSync('./0.0.0.0.pem'),
     } : false,
     port: 5173,
     host: true,
+    allowedHosts: ['.cloudspaces.litng.ai']
   }
 })

@@ -40,7 +40,7 @@ This document explains authentication in meetAI across gateway, auth-service, an
    - sets `meetai_access` and `meetai_refresh` cookies
 5. Auth-service redirects back to the frontend with `?oauth=success` or `?oauth=error`.
 6. Frontend should call `POST /verify` (or any protected API) to fetch the user profile and store `meetai_user` locally.
-7. Cookies must be set on the same host that the frontend uses for API calls (typically `http://localhost:4010` via gateway).
+7. Cookies must be set on the same host that the frontend uses for API calls (typically `http://0.0.0.0:4010` via gateway).
 
 OAuth security controls:
 
@@ -195,19 +195,19 @@ Behavior:
 curl -X POST -H "Content-Type: application/json" \
   -d '{"username":"demo","password":"demo"}' \
   -c cookies.txt \
-  http://localhost:4010/login
+  http://0.0.0.0:4010/login
 ```
 
 ```bash
-curl -X POST -b cookies.txt http://localhost:4010/refresh
-```
-
-```bash
-curl -X POST -H "Authorization: Bearer <ACCESS_TOKEN>" -b cookies.txt \
-  http://localhost:4010/logout
+curl -X POST -b cookies.txt http://0.0.0.0:4010/refresh
 ```
 
 ```bash
 curl -X POST -H "Authorization: Bearer <ACCESS_TOKEN>" -b cookies.txt \
-  http://localhost:4010/verify
+  http://0.0.0.0:4010/logout
+```
+
+```bash
+curl -X POST -H "Authorization: Bearer <ACCESS_TOKEN>" -b cookies.txt \
+  http://0.0.0.0:4010/verify
 ```

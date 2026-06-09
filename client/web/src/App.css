@@ -1016,3 +1016,34 @@
 	scrollbar-width: thin;
 	scrollbar-color: rgba(148, 163, 184, 0.15) transparent;
 }
+/* Container sizing and scroll behavior */
+.summary-content {
+    max-height: 20vh; /* Adjust this value as needed */
+    overflow-y: auto;
+    transition: max-height 0.2s ease-in-out; /* Keeps transitions smooth if you have them */
+}
+
+/* Hide scrollbar when the content is collapsed */
+.summary-content.collapsed {
+    max-height: 0;
+    overflow: hidden;
+}
+
+/* Scrollbar customization matching your design */
+.summary-content::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+}
+
+.summary-content::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.summary-content::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.15);
+    border-radius: 999px;
+}
+
+.summary-content::-webkit-scrollbar-thumb:hover {
+    background: rgba(148, 163, 184, 0.35);
+}

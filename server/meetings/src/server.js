@@ -335,8 +335,9 @@ const fetchWithRetry = async (url, options, { attempts = 3, baseDelayMs = 250 } 
 
 const app = express();
 app.use(cors({ origin: '*', methods: ['GET', 'POST', 'PATCH', 'DELETE'] }));
+app.options(/.*/, cors());
 app.use(express.json());
-
+// app.use(cors());
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
@@ -1001,7 +1002,7 @@ const handleQaMessage = async ({ req, res, meetingId, userId, question }) => {
     res.end();
   }
 };
-app.patch('/meetings/:meetingId/transcript', (req, res) => {
+app.post('/meetings/:meetingId/transcript', (req, res) => {
   const userId = requireUserId(req, res);
   if (!userId) {
     return;
@@ -1098,7 +1099,7 @@ app.patch('/meetings/:meetingId/speakers', (req, res) => {
     });
 });
 
-app.patch('/meetings/:meetingId/title', (req, res) => {
+app.post('/meetings/:meetingId/title', (req, res) => {
   const meetingId = Number(req.params.meetingId);
   const userId = requireUserId(req, res);
   const title = String(req.body?.title || '').trim();

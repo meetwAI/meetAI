@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -11,6 +12,7 @@ from fastapi.responses import StreamingResponse
 from aiengine.config.settings import settings
 from aiengine.store.pool import create_pool, close_pool
 from aiengine.qa.answer_streamer import AnswerStreamer, StreamError
+from aiengine.qa.memory import ConversationMemory
 from aiengine.qa.models import MOMRequest, QARequest, RetrievedChunk
 from aiengine.qa.question_extractor import QuestionExtractor
 from aiengine.qa.retriever import QARetriever
@@ -32,11 +34,12 @@ _db_pool = None
 _extractor: QuestionExtractor | None = None
 _retriever: QARetriever | None = None
 _streamer: AnswerStreamer | None = None
-
+_memory: ConversationMemory | None = None
+_cleanup_task: asyncio.Task | None = None
 
 @app.on_event("startup")
 async def _startup() -> None:
-    global _db_pool, _extractor, _retriever, _streamer
+    global _db_pool, _extractor, _retriever, _streamer, _memory, _cleanup_task
 
     _db_pool = await create_pool(settings.DATABASE_URL)
     _extractor = QuestionExtractor(
@@ -48,13 +51,38 @@ async def _startup() -> None:
         api_key=settings.GEMINI_API_KEY,
         model=settings.GEMINI_MODEL,
     )
+    if settings.QA_MEMORY_ENABLED:
+        _memory = ConversationMemory(
+            db_pool=_db_pool,
+            max_turns=settings.QA_MEMORY_MAX_TURNS,
+            ttl_seconds=settings.QA_MEMORY_TTL_SECONDS,
+        )
+        _cleanup_task = asyncio.create_task(_memory_cleanup_loop())
+        logger.info(
+            "QA memory enabled (max_turns=%d, ttl=%ds)",
+            settings.QA_MEMORY_MAX_TURNS,
+            settings.QA_MEMORY_TTL_SECONDS,
+        )
+        
     import socket
     logger.info("QA service ready (model=%s) (hosted on %s)", settings.GEMINI_MODEL, socket.gethostname())
 
+async def _memory_cleanup_loop() -> None:
+    """Background task that periodically evicts stale memory entries."""
+    while True:
+        await asyncio.sleep(60)
+        try:
+            if _memory is not None:
+                _memory.cleanup()
+        except Exception:
+            logger.exception("Memory cleanup failed")
 
 @app.on_event("shutdown")
 async def _shutdown() -> None:
-    global _db_pool
+    global _db_pool, _cleanup_task
+    if _cleanup_task is not None:
+        _cleanup_task.cancel()
+        _cleanup_task = None
     if _db_pool is not None:
         await close_pool(_db_pool)
         _db_pool = None
@@ -228,6 +256,14 @@ async def _stream_answer(req: QARequest) -> AsyncIterator[str]:
         len(req.question or ""),
     )
     logger.debug("QA request payload: %s", {k: (v if k != "question" else (str(v)[:1000] + ("..." if len(str(v))>1000 else ""))) for k,v in req_dump.items()})
+    
+    # 0) Conversation history — fetch from cache (or hydrate from DB).
+    history: list = []
+    if _memory is not None:
+        try:
+            history = await _memory.get_history(req.meeting_id, req.user_id)
+        except Exception:
+            logger.exception("Failed to fetch conversation history")
 
     # 1) Hints — never raises; on Gemini failure returns empty lists.
     speaker_map = _normalise_speaker_map(req.speaker_map)
@@ -236,6 +272,7 @@ async def _stream_answer(req: QARequest) -> AsyncIterator[str]:
         req.question,
         current_duration=req.current_duration,
         known_speakers=known_display_names,
+        history=history,
     )
     # Log extractor output (hints) for observability
     try:
@@ -289,7 +326,7 @@ async def _stream_answer(req: QARequest) -> AsyncIterator[str]:
     full_parts: list[str] = []
     stream_failed: str | None = None
 
-    async for item in _streamer.stream_answer(req.question, chunks, hints=hints):
+    async for item in _streamer.stream_answer(req.question, chunks, hints=hints, history=history):
         if isinstance(item, StreamError):
             stream_failed = item.message
             logger.error("Answer stream failed mid-stream: %s", stream_failed)
@@ -307,6 +344,14 @@ async def _stream_answer(req: QARequest) -> AsyncIterator[str]:
     logger.info("Streaming complete: answer_length=%d parts=%d", len(full_answer), len(full_parts))
     logger.debug("Full answer preview: %s", full_answer[:2000])
     yield _sse_event("done", {"answer": full_answer})
+
+    # Cache the completed turn in memory (DB persistence is handled by
+    # the meeting-service, so we only update the in-memory cache here).
+    if _memory is not None and full_answer:
+        try:
+            _memory.add_turn(req.meeting_id, req.user_id, req.question, full_answer)
+        except Exception:
+            logger.exception("Failed to cache conversation turn")
 
 
 @app.post("/qa")

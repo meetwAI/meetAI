@@ -51,7 +51,7 @@ Message append writes to `full_transcript.messages` as objects:
 
 ## Meeting Endpoints
 
-All are exposed on gateway (`http://localhost:4010`) and proxied to meeting-service.
+All are exposed on gateway (`http://0.0.0.0:4010`) and proxied to meeting-service.
 
 - `GET /meetings/dummy`
   - Returns list view data (title/date/summary/participants/messages)
@@ -121,7 +121,7 @@ Create meeting:
 ```bash
 curl -X POST -H "Authorization: Bearer <ACCESS_TOKEN>" -H "Content-Type: application/json" \
   -d '{}' \
-  http://localhost:4010/meetings
+  http://0.0.0.0:4010/meetings
 ```
 
 Append message:
@@ -129,14 +129,14 @@ Append message:
 ```bash
 curl -X POST -H "Authorization: Bearer <ACCESS_TOKEN>" -H "Content-Type: application/json" \
   -d '{"content":"Hello","role":"user"}' \
-  http://localhost:4010/meetings/2/messages
+  http://0.0.0.0:4010/meetings/2/messages
 ```
 
 Complete meeting:
 
 ```bash
 curl -X POST -H "Authorization: Bearer <ACCESS_TOKEN>" \
-  http://localhost:4010/meetings/2/complete
+  http://0.0.0.0:4010/meetings/2/complete
 ```
 
 Rename meeting:
@@ -144,12 +144,12 @@ Rename meeting:
 ```bash
 curl -X PATCH -H "Authorization: Bearer <ACCESS_TOKEN>" -H "Content-Type: application/json" \
   -d '{"title":"Weekly Sync"}' \
-  http://localhost:4010/meetings/2/title
+  http://0.0.0.0:4010/meetings/2/title
 ```
 
 Delete meeting:
 
 ```bash
 curl -X DELETE -H "Authorization: Bearer <ACCESS_TOKEN>" \
-  http://localhost:4010/meetings/2
+  http://0.0.0.0:4010/meetings/2
 ```

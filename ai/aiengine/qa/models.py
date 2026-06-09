@@ -30,11 +30,18 @@ class ExtractedQuestion(BaseModel):
     if the question is open-ended ("what did we decide about Q3?") both lists
     will be empty and the retriever falls back to "search every chunk under
     every matching topic".
+
+    ``resolved_question`` is the self-contained rewrite of the user's
+    question with pronouns and vague references resolved from conversation
+    history (e.g. "more on that" → "more details about the Q3 budget
+    discussion").  When there is no history or the question is already
+    self-contained, this equals the original question text.
     """
 
     speakers: List[str] = Field(default_factory=list)
     time_ranges: List[TimeRange] = Field(default_factory=list)
     metadata_only: bool = False
+    resolved_question: Optional[str] = None
 
 
 class RetrievedChunk(BaseModel):

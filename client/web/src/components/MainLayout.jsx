@@ -5,7 +5,7 @@ import './MainLayout.css';
 import { getSocket, connectSocket } from '../lib/socket';
 import { fetchWithAuth } from '../lib/http';
 import { Menu, Mic, Plus } from 'lucide-react';
-import { activeMeetingIdState } from '../state';
+import { activeMeetingIdState, liveTranscriptSignal } from '../state';
 
 const MainLayout = () => {
     const navigate = useNavigate();
@@ -57,13 +57,36 @@ const MainLayout = () => {
         return next;
     }, [lineSignature]);
 
+    const lastCacheUpdateRef = React.useRef(0);
     const applyTranscriptStateToCache = React.useCallback((meetingId, transcriptState) => {
         const meetingIdString = String(meetingId);
+        
+        // Update the signal for high-frequency UI updates (no heavy re-renders)
+        liveTranscriptSignal.value = {
+            meetingId: meetingIdString,
+            ...transcriptState
+        };
+
+        // THROTTLE the global cache update to once every 5 seconds
+        const now = Date.now();
+        if (now - lastCacheUpdateRef.current < 5000) {
+            return;
+        }
+        lastCacheUpdateRef.current = now;
+
+        // update minimal metadata in the cache
         queryClient.setQueryData(['meeting', String(meetingId)], (current) => {
             if (!current || String(current.id) !== String(meetingId)) {
                 return current;
             }
-            return { ...current, ...transcriptState };
+            return { 
+                ...current, 
+                asrStatus: transcriptState.asrStatus,
+                updatedAt: transcriptState.updatedAt,
+                lines: transcriptState.lines, // Update lines occasionally for consistency
+                bufferTranscription: transcriptState.bufferTranscription,
+                bufferDiarization: transcriptState.bufferDiarization,
+            };
         });
 
         queryClient.setQueriesData({ queryKey: ['meetings', 'dummy'] }, (current) => {
@@ -72,13 +95,31 @@ const MainLayout = () => {
                 if (String(meeting.id) !== meetingIdString) {
                     return meeting;
                 }
-                return { ...meeting, ...transcriptState };
+                return { 
+                    ...meeting, 
+                    asrStatus: transcriptState.asrStatus,
+                    updatedAt: transcriptState.updatedAt,
+                    // We don't necessarily need to update full lines in the list view often
+                };
             });
         });
     }, [queryClient]);
 
     const stopCapture = React.useCallback(async () => {
         const completedMeetingId = activeMeetingIdRef.current;
+
+        // Force a cache update on stop to ensure last lines are saved
+        if (completedMeetingId) {
+            queryClient.setQueryData(['meeting', String(completedMeetingId)], (current) => {
+                if (!current) return current;
+                return { 
+                    ...current, 
+                    lines: cumulativeLinesRef.current,
+                    updatedAt: new Date().toISOString()
+                };
+            });
+        }
+
         if (processorNodeRef.current) {
             try {
                 processorNodeRef.current.disconnect();
@@ -148,7 +189,7 @@ const MainLayout = () => {
 
         if (!window.isSecureContext) {
             setCaptureState('idle');
-            setCaptureError('Screen capture requires HTTPS or localhost.');
+            setCaptureError('Screen capture requires HTTPS or 0.0.0.0.');
             return;
         }
 
@@ -264,15 +305,15 @@ const MainLayout = () => {
                     updatedAt: new Date().toISOString(),
                 };
 
-                const headline = mergedLines.slice(-3).map((line) => line.text).filter(Boolean).join(' ');
-                if (headline) {
-                    setServerMessage(headline);
-                }
+                // const headline = mergedLines.slice(-3).map((line) => line.text).filter(Boolean).join(' ');
+                // if (headline) {
+                //    setServerMessage(headline);
+                // }
 
                 applyTranscriptStateToCache(targetMeetingId, transcriptState);
 
                 fetchWithAuth(`/meetings/${targetMeetingId}/transcript`, {
-                    method: 'PATCH',
+                    method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(transcriptState),
                 })
@@ -398,7 +439,7 @@ const MainLayout = () => {
                 <NavLink
                     to="/"
                     end
-                    className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
+                    /={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
                     onClick={() => setMobileMenuOpen(false)}
                 >
                     Home
@@ -419,18 +460,6 @@ const MainLayout = () => {
                 </NavLink>
             </nav>
 
-            {/* {(captureState === 'requesting' || captureState === 'capturing' || serverMessage || captureError) && (
-                <div className="capture-status-strip">
-                    {captureState === 'requesting' && (
-                        <p className="recap-summary">Waiting for permission to capture a tab...</p>
-                    )}
-                    {captureState === 'capturing' && (
-                        <p className="recap-summary">Capturing tab audio and streaming realtime PCM...</p>
-                    )}
-                    {captureError && <p className="recap-summary">{captureError}</p>}
-                </div>
-            )} */}
-
             <main className="main-content">
                 <Outlet />
             </main>
@@ -439,5 +468,3 @@ const MainLayout = () => {
 };
 
 export default MainLayout;
-
-

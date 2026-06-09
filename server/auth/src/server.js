@@ -14,7 +14,7 @@ const os = require('os');
 const PORT = requireNumberEnv('AUTH_PORT');
 const FRONTEND_ORIGIN = requireEnv('FRONTEND_ORIGIN');
 const SESSION_SECRET = requireEnv('SESSION_SECRET')
-const useHttps = process.env.AUTH_USE_HTTPS === 'true';
+const useHttps = false && process.env.AUTH_USE_HTTPS === 'true';
 const app = express();
 app.use(
   cors({
@@ -39,7 +39,8 @@ app.use(
 );
 app.use(passport.initialize());
 app.use(express.json());
-
+app.use(cors());
+app.options(/.*/, cors());
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
@@ -51,17 +52,17 @@ if (useHttps) {
   server = https
     .createServer(
       {
-        key: fs.readFileSync('localhost-key.pem'),
-        cert: fs.readFileSync('localhost.pem'),
+        key: fs.readFileSync('0.0.0.0-key.pem'),
+        cert: fs.readFileSync('0.0.0.0.pem'),
       },
       app
     )
     .listen(PORT, () => {
-      console.log(`HTTPS Auth service on https://localhost:${PORT} (hosted on ${os.hostname()})`);
+      console.log(`HTTPS Auth service on https://0.0.0.0:${PORT} (hosted on ${os.hostname()})`);
     });
 } else {
   server = app.listen(PORT, () => {
-    console.log(`HTTP Auth service on http://localhost:${PORT} (hosted on ${os.hostname()})`);
+    console.log(`HTTP Auth service on http://0.0.0.0:${PORT} (hosted on ${os.hostname()})`);
   });
 }
 

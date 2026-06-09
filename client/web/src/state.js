@@ -14,4 +14,13 @@ export const togglePreviousMeetingsSidebar = () => {
 	sidebarState.value = !sidebarState.value;
 };
 
-export const activeMeetingIdState = signal(null);
+export const activeMeetingIdState = signal(null);
+
+export const liveTranscriptSignal = signal({
+  meetingId: null,
+  lines: [],
+  bufferTranscription: '',
+  bufferDiarization: '',
+  asrStatus: 'idle',
+  updatedAt: null,
+});

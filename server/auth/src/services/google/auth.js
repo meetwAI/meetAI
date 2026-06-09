@@ -11,7 +11,7 @@ const { hashGoogleId } = require('./secrets');
 
 const normalizeText = (value) => String(value || '').trim();
 
-const GOOGLE_CALENDAR_READ_SCOPE = 'https://www.googleapis.com/auth/calendar.readonly';
+const GOOGLE_CALENDAR_READ_SCOPE = 'http://www.googleapis.com/auth/calendar.readonly';
 const GOOGLE_LOGIN_SCOPES = ['profile', 'email'];
 const GOOGLE_CALENDAR_SCOPES = ['profile', 'email', GOOGLE_CALENDAR_READ_SCOPE];
 const GOOGLE_OAUTH_MODE_LOGIN = 'login';

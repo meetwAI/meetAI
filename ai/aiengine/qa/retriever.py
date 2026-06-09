@@ -285,9 +285,13 @@ class QARetriever:
 
         # 1) Embed the question. One element batch — local mode runs inline,
         #    service mode does one HTTP round-trip.
+        # Use the resolved question (with pronouns/references expanded) for
+        # embedding when available, so vague follow-ups like "more on that"
+        # produce meaningful vectors.
+        embed_text = (hints.resolved_question or text).strip() or text
 
         try:
-            vectors= await asyncio.wait_for(embed_texts_async([text]), timeout=10.0)
+            vectors= await asyncio.wait_for(embed_texts_async([embed_text]), timeout=10.0)
         except TimeoutError:
             logger.error("QA pipeline failed: Embedding microservice timed out.")
             raise RuntimeError("Embedding service unavailable")

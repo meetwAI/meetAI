@@ -62,6 +62,7 @@ class WorkerRuntime:
             buffer_trimming=settings.BUFFER_TRIMMING,
             buffer_trimming_sec=settings.BUFFER_TRIMMING_SEC,
             confidence_validation=settings.CONFIDENCE_VALIDATION,
+            use_auth_token=settings.HF_TOKEN
         )
         logger.info(
             "ASR configured: model=%s device=%s compute_type=%s require_gpu=%s",

@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import AsyncIterator, List, Optional
+from typing import AsyncIterator, Dict, List, Optional
 
 from google import genai
 from google.genai import types as genai_types
@@ -162,6 +162,39 @@ def _build_empty_context_message(hints: ExtractedQuestion) -> str | None:
         f"{plural} appears to be silence or was not captured in the transcript."
     )
 
+def _format_history_for_answer(
+    history: Optional[List[Dict[str, str]]],
+) -> str:
+    """
+    Render conversation history into a prompt section for the answer streamer.
+
+    Returns an empty string when there is no history so the prompt is
+    unchanged for first-question requests.
+    """
+    if not history:
+        return ""
+
+    lines: List[str] = []
+    for turn in history:
+        role = turn.get("role", "user")
+        content = (turn.get("content") or "").strip()
+        if not content:
+            continue
+        # Truncate very long answers to keep the prompt within budget.
+        if len(content) > 500:
+            content = content[:500] + "..."
+        label = "User" if role == "user" else "Assistant"
+        lines.append(f"{label}: {content}")
+
+    if not lines:
+        return ""
+
+    block = "\n".join(lines)
+    return (
+        f"PREVIOUS CONVERSATION (for context only — you MUST still answer "
+        f"using ONLY the transcript chunks below, do not repeat previous "
+        f"answers):\n{block}\n\n"
+    )
 
 class AnswerStreamer:
     """
@@ -186,6 +219,7 @@ class AnswerStreamer:
         question: str,
         chunks: List[RetrievedChunk],
         hints: Optional[ExtractedQuestion] = None,
+        history: Optional[List[Dict[str, str]]] = None,
     ) -> AsyncIterator[str | StreamError]:
         """
         Yield text deltas as Gemini produces them.
@@ -222,12 +256,16 @@ class AnswerStreamer:
                 "AnswerStreamer.stream_answer called: question_len=%s chunks=%s",
                 len(text),
                 [c.chunk_id for c in chunks],
+                len(history) if history else 0,
             )
         except Exception:
             pass
 
+        history_section = _format_history_for_answer(history)
+
         prompt = (
             f"{_PROMPT_INSTRUCTIONS}\n\n"
+            f"{history_section}"
             f"USER QUESTION:\n{text}\n\n"
             f"TRANSCRIPT CHUNKS:\n{_format_chunks(chunks)}\n"
         )

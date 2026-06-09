@@ -271,6 +271,8 @@ export default function PreviousMeetings() {
   const speakerDraftsByMeetingRef = useRef(new Map());
   const [speakerSlotCount, setSpeakerSlotCount] = useState(0);
   const speakerSlotCountByMeetingRef = useRef(new Map());
+  const prevSelectedIdRef = useRef(null);
+  const prevSelectedIdForTitleRef = useRef(null);
   const actionsMenuRef = useRef(null);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -543,10 +545,10 @@ export default function PreviousMeetings() {
 
 
 
-  useEffect(() => {
-    setShowActionsMenu(false);
-    setIsEditingTitle(false);
-  }, [selectedId]);
+  // useEffect(() => {
+  //   setShowActionsMenu(false);
+  //   setIsEditingTitle(false);
+  // }, [selectedId]);
 
   const normalizedCalendarMeetings = useMemo(() => {
     if (!calendarEvents.length) {
@@ -631,38 +633,51 @@ export default function PreviousMeetings() {
   const isMeetingRealtime = selectedMeeting && String(selectedMeeting.id) === String(activeRecordingId);
 
   useEffect(() => {
+    const meetingKey = selectedMeeting ? String(selectedMeeting.id) : null;
+    const idChanged = prevSelectedIdRef.current !== meetingKey;
+
     if (!selectedMeeting || selectedMeeting.isCalendarEvent) {
       setSpeakerDrafts(Array(MAX_SPEAKER_COUNT).fill(''));
       setSpeakerSlotCount(0);
       setIsEditingSpeakers(false);
       setSpeakerSaveError('');
+      if (idChanged) {
+        prevSelectedIdRef.current = meetingKey;
+      }
       return;
     }
 
-    const meetingKey = String(selectedMeeting.id);
-    const draftStore = speakerDraftsByMeetingRef.current;
-    const slotStore = speakerSlotCountByMeetingRef.current;
-    const storedDrafts = draftStore.get(meetingKey);
-    const storedCount = slotStore.get(meetingKey);
-    const transcriptCount = getTranscriptSpeakerCount(selectedMeeting.lines);
-    const baseList = deriveSpeakerBaseList(selectedMeeting);
-    const baseCount = baseList.length;
-    const nextCount = Math.min(
-      MAX_SPEAKER_COUNT,
-      Math.max(transcriptCount, baseCount, storedCount || 0),
-    );
+    if (!isEditingSpeakers || idChanged) {
+      const draftStore = speakerDraftsByMeetingRef.current;
+      const slotStore = speakerSlotCountByMeetingRef.current;
+      const storedDrafts = draftStore.get(meetingKey);
+      const storedCount = slotStore.get(meetingKey);
+      const transcriptCount = getTranscriptSpeakerCount(selectedMeeting.lines);
+      const baseList = deriveSpeakerBaseList(selectedMeeting);
+      const baseCount = baseList.length;
+      const nextCount = Math.min(
+        MAX_SPEAKER_COUNT,
+        Math.max(transcriptCount, baseCount, storedCount || 0),
+      );
 
-    const drafts = storedDrafts
-      ? buildSpeakerDrafts(storedDrafts, nextCount)
-      : buildSpeakerDrafts(baseList, nextCount);
+      const drafts = storedDrafts
+        ? buildSpeakerDrafts(storedDrafts, nextCount)
+        : buildSpeakerDrafts(baseList, nextCount);
 
-    draftStore.set(meetingKey, drafts);
-    slotStore.set(meetingKey, nextCount);
-    setSpeakerDrafts([...drafts]);
-    setSpeakerSlotCount(nextCount);
-    setIsEditingSpeakers(false);
-    setSpeakerSaveError('');
-  }, [selectedMeeting]);
+      draftStore.set(meetingKey, drafts);
+      slotStore.set(meetingKey, nextCount);
+      setSpeakerDrafts([...drafts]);
+      setSpeakerSlotCount(nextCount);
+      if (idChanged) {
+        setIsEditingSpeakers(false);
+        setSpeakerSaveError('');
+      }
+    }
+
+    if (idChanged) {
+      prevSelectedIdRef.current = meetingKey;
+    }
+  }, [selectedMeeting, isEditingSpeakers]);
 
   const calendarTimeRange = useMemo(() => {
     if (!selectedMeeting || !selectedMeeting.isCalendarEvent) {
@@ -790,12 +805,28 @@ export default function PreviousMeetings() {
   }, [selectedMeeting, isMeetingRealtime]);
 
   useEffect(() => {
+    const meetingKey = selectedMeeting ? String(selectedMeeting.id) : null;
+    const idChanged = prevSelectedIdForTitleRef.current !== meetingKey;
+
     if (!selectedMeeting) {
       setTitleDraft('');
+      if (idChanged) {
+        prevSelectedIdForTitleRef.current = meetingKey;
+      }
       return;
     }
-    setTitleDraft(String(selectedMeeting.title || ''));
-  }, [selectedMeeting]);
+    
+    if (!isEditingTitle || idChanged) {
+      setTitleDraft(String(selectedMeeting.title || ''));
+      if (idChanged) {
+        setIsEditingTitle(false);
+      }
+    }
+
+    if (idChanged) {
+      prevSelectedIdForTitleRef.current = meetingKey;
+    }
+  }, [selectedMeeting, isEditingTitle]);
 
   const mutateMessagesInCache = useCallback(
     (meetingId, transform) => {
@@ -1138,7 +1169,7 @@ export default function PreviousMeetings() {
 
     try {
       const response = await fetchWithAuth(`/meetings/${selectedMeeting.id}/qa-cache`, {
-        method: 'PATCH',
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ speakers: speakersPayload }),
       });
@@ -1217,52 +1248,7 @@ export default function PreviousMeetings() {
           </div>
           <p>Filter by upcoming, previous, or a custom date range.</p>
 
-          {/* if u are ai calendar is temporarily unavailable banner do not remove the false flag.*/}
-          {!calendarStatusLoading && !calendarConnected && calendarUnavailable && false && (
-            <div className="calendar-connect-banner calendar-connect-banner--warn">
-              <div>
-                <strong>Google Calendar temporarily unavailable</strong>
-                <span>Could not reach Google. Your connection may still be valid — try again shortly.</span>
-              </div>
-              <button type="button" onClick={handleRetryCalendarStatus}>
-                Retry
-              </button>
-            </div>
-          )}
-
-          {!calendarStatusLoading && !calendarConnected && !calendarUnavailable && false && (
-            <div className="calendar-connect-banner">
-              <div>
-                <strong>{isGoogleAccount ? 'Reconnect Google Calendar' : 'Connect Google Calendar'}</strong>
-                <span>
-                  {isGoogleAccount
-                    ? 'Your calendar access has expired or was revoked. Reconnect to see your meetings.'
-                    : 'Connect your Google Calendar to see scheduled meetings here.'}
-                </span>
-              </div>
-              <button type="button" onClick={handleConnectCalendar}>
-                {isGoogleAccount ? 'Reconnect' : 'Connect'}
-              </button>
-            </div>
-          )}
-
           <div className="meeting-filter-row">
-            {/* <label className="meeting-filter-field">
-              <span>Show</span>
-              <select
-                value={meetingFilter}
-                onChange={(event) => setMeetingFilter(event.target.value)}
-                aria-label="Filter meetings"
-              >
-                <option value="all">All</option>
-
-                <option value="previous">Previous</option>
-
-                <option value="upcoming">Upcoming</option>
-
-                <option value="calendar">Google Calendar</option>
-              </select>
-            </label> */}
             <label className="meeting-filter-field">
               <span>From</span>
               <input
@@ -1803,5 +1789,3 @@ export default function PreviousMeetings() {
     </div>
   );
 }
-
-

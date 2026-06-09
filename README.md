@@ -23,10 +23,10 @@ POSIX (macOS / Linux / WSL):
 ```
 
 Services started:
-- Frontend (Vite): `http://localhost:5173`
-- Gateway: `http://localhost:4010`
-- Auth service: `http://localhost:4020`
-- Meeting service: `http://localhost:4001`
+- Frontend (Vite): `http://0.0.0.0:5173`
+- Gateway: `http://0.0.0.0:4010`
+- Auth service: `http://0.0.0.0:4020`
+- Meeting service: `http://0.0.0.0:4001`
 - AI realtime gateway: internal `http://ai-gateway:8000`
 - Redis: internal `redis:6379` (not published to host by default)
 

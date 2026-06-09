@@ -67,8 +67,8 @@ const clearRefreshCookie = (res) => {
 };
 
 const clearAccessCookie = (res) => {
-  const useHttps = process.env.AUTH_USE_HTTPS === 'true';
-  const akram = process.env.auth_dev_mode === 'true';
+  const useHttps = false && process.env.AUTH_USE_HTTPS === 'true';
+  const akram = false && process.env.auth_dev_mode === 'true';
   res.cookie('meetai_access', '', {
     httpOnly: true,
     sameSite: 'lax',

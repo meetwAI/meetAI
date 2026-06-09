@@ -37,7 +37,7 @@ coverage/
 *.log
 .run/
 
-# TLS keys (NOTE: the committed localhost.pem / localhost-key.pem
+# TLS keys (NOTE: the committed 0.0.0.0.pem / 0.0.0.0-key.pem
 # are tracked from a pre-restructure state; removal is a follow-up PR.
 # This rule prevents NEW *.pem files from being committed.)
 *.pem
@@ -51,3 +51,5 @@ New Text Document*
 
 # pnpm content-addressable store (created by in-repo pnpm installs)
 *.pnpm-store/
+
+*.pem

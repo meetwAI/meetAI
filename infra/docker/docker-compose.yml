@@ -27,21 +27,17 @@ services:
       # Context is the pnpm workspace root; the Dockerfile lives in the package.
       context: ../../server
       dockerfile: auth/Dockerfile
-    command: node --inspect=0.0.0.0:9229 src/server.js
+    command: node src/server.js
     env_file:
       - ../../server/.env
     environment:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       DATABASE_URL: postgresql://meetai:${POSTGRES_PASSWORD:-meetai_pass}@postgres:5432/meetai_dev
-      # Keep in sync with gateway's AUTH_SERVICE_URL protocol.
-      # Default to true because gateway uses https://auth-service:4020.
-      AUTH_USE_HTTPS: ${AUTH_USE_HTTPS:-true}
-    volumes:
-      - ../../localhost.pem:/workspace/auth/localhost.pem:ro
-      - ../../localhost-key.pem:/workspace/auth/localhost-key.pem:ro
+      # Lightning.ai terminates TLS at the edge; internal traffic is plain HTTP.
+      AUTH_USE_HTTPS: "false"
+    # Cert volumes removed — Lightning.ai handles TLS externally.
     ports:
       - "4020:4020"
-      - "9229:9229"
     depends_on:
       redis:
         condition: service_healthy
@@ -53,9 +49,8 @@ services:
           "CMD",
           "node",
           "-e",
-          "const h=require(process.env.AUTH_USE_HTTPS==='true'?'https':'http');h.get((process.env.AUTH_USE_HTTPS==='true'?'https':'http')+'://localhost:4020/health',{rejectUnauthorized:false},r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))",
+          "require('http').get('http://0.0.0.0:4020/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))",
         ]
-
       interval: 5s
       timeout: 3s
       retries: 20
@@ -80,16 +75,16 @@ services:
     environment:
       DATABASE_URL: postgresql://meetai:${POSTGRES_PASSWORD:-meetai_pass}@postgres:5432/meetai_dev
       QA_SERVICE_URL: http://qa-service:8100
-      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-https://localhost:5173}
-    ports:
-      - "4001:4001"
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-https://5173-01ktkf3mffk9c5m6q2tvfyhjs4.cloudspaces.litng.ai}
+    # ports:
+    #   - "4001:4001"
     healthcheck:
       test:
         [
           "CMD",
           "node",
           "-e",
-          "require('http').get('http://localhost:4001/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))",
+          "require('http').get('http://0.0.0.0:4001/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))",
         ]
       interval: 5s
       timeout: 3s
@@ -118,19 +113,17 @@ services:
     env_file:
       - ../../server/.env
     environment:
-      AUTH_SERVICE_URL: https://auth-service:4020
+      AUTH_SERVICE_URL: http://auth-service:4020
       MEETING_SERVICE_URL: http://meeting-service:4001
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       AI_SERVICE_WS_URL: ws://ai-gateway:8000/asr
       QA_SERVICE_URL: http://qa-service:8100
-      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-https://localhost:5173}
-      # Dev talks to auth-service over its self-signed cert; allow it here only.
-      GATEWAY_ALLOW_SELF_SIGNED: ${GATEWAY_ALLOW_SELF_SIGNED:-true}
+      DATABASE_URL: postgresql://meetai:${POSTGRES_PASSWORD:-meetai_pass}@postgres:5432/meetai_dev
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-https://5173-01ktkf3mffk9c5m6q2tvfyhjs4.cloudspaces.litng.ai}
+      GATEWAY_ALLOW_SELF_SIGNED: "false"
     ports:
       - "4010:4010"
-    volumes:
-      - ../../localhost.pem:/workspace/gateway/localhost.pem:ro
-      - ../../localhost-key.pem:/workspace/gateway/localhost-key.pem:ro
+    # Cert volumes removed — gateway talks to all upstreams over plain HTTP.
     depends_on:
       redis:
         condition: service_healthy
@@ -146,7 +139,7 @@ services:
           "CMD",
           "node",
           "-e",
-          "const h=require(process.env.AUTH_USE_HTTPS==='true'?'https':'http');h.get((process.env.AUTH_USE_HTTPS==='true'?'https':'http')+'://localhost:4010/health',{rejectUnauthorized:false},r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))",
+          "require('http').get('http://0.0.0.0:4010/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))",
         ]
       interval: 5s
       timeout: 3s
@@ -183,7 +176,7 @@ services:
           "CMD",
           "python3",
           "-c",
-          "import urllib.request,sys;sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=3).getcode()==200 else 1)",
+          "import urllib.request,sys;sys.exit(0 if urllib.request.urlopen('http://0.0.0.0:8000/health', timeout=3).getcode()==200 else 1)",
         ]
       interval: 5s
       timeout: 5s
@@ -216,13 +209,19 @@ services:
           "CMD",
           "python3",
           "-c",
-          "import json,urllib.request,sys; data=json.load(urllib.request.urlopen('http://localhost:8200/health', timeout=3)); sys.exit(0 if data.get('model_loaded') else 1)",
+          "import json,urllib.request,sys; data=json.load(urllib.request.urlopen('http://0.0.0.0:8200/health', timeout=3)); sys.exit(0 if data.get('model_loaded') else 1)",
         ]
       interval: 5s
       timeout: 5s
       retries: 20
       start_period: 10m
-    gpus: all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     restart: unless-stopped
 
   ai-worker:
@@ -233,6 +232,8 @@ services:
         # Full ASR/diarization stack — the worker runs the audio pipeline.
         REQUIREMENTS: requirements/worker.txt
     command: python3 -m aiengine.worker
+    env_file:
+      - ../../ai/.env
     environment:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       DATABASE_URL: postgresql://meetai:${POSTGRES_PASSWORD:-meetai_pass}@postgres:5432/meetai_dev
@@ -248,7 +249,13 @@ services:
         condition: service_healthy
       embedder:
         condition: service_healthy
-    gpus: all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     restart: unless-stopped
 
   qa-service:
@@ -277,7 +284,7 @@ services:
           "CMD",
           "python3",
           "-c",
-          "import urllib.request,sys;sys.exit(0 if urllib.request.urlopen('http://localhost:8100/health', timeout=3).getcode()==200 else 1)",
+          "import urllib.request,sys;sys.exit(0 if urllib.request.urlopen('http://0.0.0.0:8100/health', timeout=3).getcode()==200 else 1)",
         ]
       interval: 5s
       timeout: 5s
@@ -292,9 +299,9 @@ services:
     environment:
       CHOKIDAR_USEPOLLING: "true"
       HOST: 0.0.0.0
-      VITE_AUTH_URL: ${VITE_AUTH_URL:-https://localhost:4010}
-      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-https://localhost:5173}
-      VITE_AUTH_USE_HTTPS: "true"
+      VITE_AUTH_URL: ${VITE_AUTH_URL:-https://4010-01ktkf3mffk9c5m6q2tvfyhjs4.cloudspaces.litng.ai}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-https://5173-01ktkf3mffk9c5m6q2tvfyhjs4.cloudspaces.litng.ai}                                        
+      VITE_AUTH_USE_HTTPS: "false"
     ports:
       - "5173:5173"
     develop:
@@ -310,12 +317,7 @@ services:
     depends_on:
       gateway:
         condition: service_healthy
-    volumes:
-      # 1. ❌ REMOVED: - ../../client/web:/app (Compose watch handles this now!)
-      # 2. ❌ REMOVED: - /app/node_modules (No longer needed since host files aren't stomping on /app)
-      # 3. KEEP: Only mount the specific certificates needed for HTTPS
-      - ../../localhost.pem:/app/localhost.pem:ro
-      - ../../localhost-key.pem:/app/localhost-key.pem:ro
+    # Cert volumes removed — web runs over plain HTTP; Lightning.ai handles HTTPS externally.
     restart: unless-stopped
 
   postgres:

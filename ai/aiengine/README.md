@@ -48,7 +48,7 @@ python -m aiengine.gateway.service
 
 5) Open UI:
 
-`http://localhost:8000`
+`http://0.0.0.0:8000`
 
 Click **Share Tab** for browser tab audio capture (or **Use Microphone**).
 
@@ -81,6 +81,6 @@ This starts:
 
 ## Notes
 
-- Default websocket endpoint: `ws://localhost:8000/asr`
+- Default websocket endpoint: `ws://0.0.0.0:8000/asr`
 - Silero model files are expected under `src/models/silero_vad_models/`
 - Settings are in `src/core/config.py`; copy `src/.env.example` to `.env` to override.

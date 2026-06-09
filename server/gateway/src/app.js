@@ -21,8 +21,8 @@ const PORT = requireNumberEnv('GATEWAY_PORT');
 const MEETING_SERVICE_URL = requireEnv('MEETING_SERVICE_URL');
 const AUTH_SERVICE_URL = requireEnv('AUTH_SERVICE_URL');
 const FRONTEND_ORIGIN = requireEnv('FRONTEND_ORIGIN');
-const AI_SERVICE_WS_URL = process.env.AI_SERVICE_WS_URL || 'ws://localhost:8000/asr';
-const useHttps = process.env.AUTH_USE_HTTPS === 'true';
+const AI_SERVICE_WS_URL = process.env.AI_SERVICE_WS_URL || 'ws://0.0.0.0:8000/asr';
+const useHttps = false && process.env.AUTH_USE_HTTPS === 'true';
 const QA_SERVICE_URL = (process.env.QA_SERVICE_URL || ' http://qa-service:8100').trim().replace(/\/+$/, '');
 // Only skip upstream TLS verification when explicitly opted in (dev with
 // self-signed certs). In prod this stays false so upstream certs are verified.
@@ -103,28 +103,52 @@ const endMeetingTranscript = async (meetingId) => {
 
 
 const app = express();
-app.use(
-  cors({
-    origin: [FRONTEND_ORIGIN],
-    credentials: true,
-    methods: ['GET', 'POST', 'PATCH', 'DELETE'],
-  }),
-);
-app.use(express.json());
+
+// 1. Consolidated CORS + Logging Middleware (Must be FIRST)
 app.use((req, res, next) => {
   const start = Date.now();
-  const { method, path } = req;
+  const { method, path, headers } = req;
+  const origin = headers.origin;
 
-  // Capture the original send to log the response
+  // Set standard CORS headers for ALL responses
+  res.setHeader('Access-Control-Allow-Origin', origin || FRONTEND_ORIGIN || '*');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Cookie, X-Requested-With, Accept, Origin, X-User-Id');
+  res.setHeader('Access-Control-Max-Age', '86400'); // 24 hours
+  res.setHeader('Vary', 'Origin');
+
+  // Handle Preflight
+  if (method === 'OPTIONS') {
+    console.log(`[gateway] OPTIONS ${path} -> 204 (Origin: ${origin})`);
+    return res.status(204).end();
+  }
+
+  // Intercept response to log completion
   const originalSend = res.send;
   res.send = function (body) {
     const duration = Date.now() - start;
-    console.log(`[gateway] ${method} ${path} -> ${res.statusCode} (${duration}ms) - Body length: ${body ? body.length : 0}`);
+    const corsOrigin = res.getHeader('access-control-allow-origin');
+    console.log(`[gateway] ${method} ${path} -> ${res.statusCode} (${duration}ms) - Origin: ${origin} - CORS-Set: ${corsOrigin}`);
     return originalSend.apply(res, arguments);
   };
 
   next();
 });
+
+app.use(express.json());
+
+// 2. Global Error Handler (Add at the end, but I'll prepare it here)
+const globalErrorHandler = (err, req, res, next) => {
+  console.error(`[gateway] Error for ${req.method} ${req.path}:`, err);
+  if (!res.headersSent) {
+    res.status(err.status || 500).json({ 
+      message: err.message || 'Internal Server Error',
+      error: process.env.NODE_ENV === 'development' ? err : {}
+    });
+  }
+};
+
 
 const parseCookieHeader = (cookieHeader = '') => {
   const parts = String(cookieHeader || '').split(';');
@@ -767,9 +791,13 @@ const verifyAccess = (req, res, next) => {
     return next();
   };
 
-  const unauthorized = () => res.status(401).json({ message: 'Unauthorized' });
+  const unauthorized = (reason = 'Unauthorized') => {
+    console.warn(`[gateway] access denied: ${reason} for ${req.method} ${req.path}`);
+    res.status(401).json({ message: 'Unauthorized' });
+  };
 
   const refreshSession = () => {
+    console.log(`[gateway] attempting session refresh for ${req.method} ${req.path}`);
     const refreshClient = refreshUrl.protocol === 'https:' ? https : http;
     const refreshReq = refreshClient.request(
       refreshUrl,
@@ -787,6 +815,7 @@ const verifyAccess = (req, res, next) => {
         });
         refreshRes.on('end', () => {
           if (refreshRes.statusCode !== 200) {
+            console.warn(`[gateway] session refresh failed with status ${refreshRes.statusCode}`);
             return unauthorized();
           }
 
@@ -796,14 +825,17 @@ const verifyAccess = (req, res, next) => {
               getCookieFromSetCookie(refreshRes.headers['set-cookie'], 'meetai_access') || '';
             const user = parsed?.user || null;
             if (!newAccessToken || !user) {
+              console.warn('[gateway] session refresh missing token or user');
               return unauthorized();
             }
+            console.log(`[gateway] session refreshed for user ${user.id}`);
             return applyVerifiedSession({
               user,
               accessToken: newAccessToken,
               setCookieHeader: refreshRes.headers['set-cookie'],
             });
-          } catch (_error) {
+          } catch (error) {
+            console.error('[gateway] session refresh parse error', error);
             return unauthorized();
           }
         });
@@ -839,6 +871,7 @@ const verifyAccess = (req, res, next) => {
       });
       proxyRes.on('end', () => {
         if (proxyRes.statusCode !== 200) {
+          console.log(`[gateway] verify failed with status ${proxyRes.statusCode}; refreshing...`);
           return refreshSession();
         }
 
@@ -852,6 +885,7 @@ const verifyAccess = (req, res, next) => {
         }
 
         if (!verifiedUser) {
+          console.warn('[gateway] verify returned OK but no user found');
           return refreshSession();
         }
 
@@ -886,44 +920,46 @@ const verifyAccess = (req, res, next) => {
 const proxyMeetingService = (method, path, req, res) => {
   const targetUrl = new URL(path, MEETING_SERVICE_URL);
   const client = targetUrl.protocol === 'https:' ? https : http;
-  const hasBody = method === 'POST' || method === 'PATCH';
-  const body = hasBody ? JSON.stringify(req.body || {}) : null;
+
   const clientAccept = String(req.headers['accept'] || '').toLowerCase();
   const wantsSse =
     clientAccept.includes('text/event-stream') ||
     (req.body && req.body.mode === 'qa');
-  const headers = { ...req.headers }
+
+  const headers = { ...req.headers };
   delete headers.host;
-  delete headers['content-length'];
+  delete headers['origin'];
+  delete headers['referer'];
+  
   headers.Accept = wantsSse ? 'text/event-stream' : 'application/json';
   headers.Authorization = req.authToken ? `Bearer ${req.authToken}` : (req.headers.authorization || '');
   headers['x-user-id'] = req.authUser?.id ? String(req.authUser.id) : '';
 
-  if (hasBody) {
+  // Prepare the payload if express.json() already parsed it
+  let bodyData = null;
+  if ((method === 'POST' || method === 'PATCH') && req.body && Object.keys(req.body).length > 0) {
+    bodyData = JSON.stringify(req.body);
     headers['Content-Type'] = req.headers['content-type'] || 'application/json';
-    headers['Content-Length'] = Buffer.byteLength(body);
+    headers['Content-Length'] = Buffer.byteLength(bodyData);
+  } else if (method === 'PATCH' || method === 'POST') {
+    // Force 0 length if no body is present to prevent cloud proxy hangups
+    headers['Content-Length'] = '0';
   }
 
   const proxyReq = client.request(
     targetUrl,
     { method, headers, rejectUnauthorized: !ALLOW_SELF_SIGNED },
     (proxyRes) => {
-      const upstreamType = String(
-        proxyRes.headers['content-type'] || 'application/json',
-      );
+      const upstreamType = String(proxyRes.headers['content-type'] || 'application/json');
       const isStream = upstreamType.toLowerCase().includes('text/event-stream');
 
       if (isStream) {
-        // Pipe-through path: forward headers verbatim, including the
-        // anti-buffering hints, and stream the body bytes as they arrive.
         res.status(proxyRes.statusCode || 200);
         res.setHeader('Content-Type', upstreamType);
-        res.setHeader(
-          'Cache-Control',
-          proxyRes.headers['cache-control'] || 'no-cache, no-transform',
-        );
+        res.setHeader('Cache-Control', proxyRes.headers['cache-control'] || 'no-cache, no-transform');
         res.setHeader('Connection', 'keep-alive');
         res.setHeader('X-Accel-Buffering', 'no');
+
         if (typeof res.flushHeaders === 'function') {
           res.flushHeaders();
         }
@@ -931,28 +967,15 @@ const proxyMeetingService = (method, path, req, res) => {
         proxyRes.on('data', (chunk) => {
           res.write(chunk);
         });
+        
         proxyRes.on('end', () => {
-          if (!res.writableEnded) {
-            res.end();
-          }
+          if (!res.writableEnded) res.end();
         });
-        proxyRes.on('error', (error) => {
-          console.error('[gateway] upstream stream error', error);
-          if (!res.writableEnded) {
-            res.end();
-          }
-        });
-        // If the browser disconnects, abort the upstream so we don't keep
-        // pulling tokens nobody is reading.
-        req.on('close', () => {
-          if (!res.writableEnded) {
-            proxyReq.destroy();
-          }
-        });
+
         return;
       }
 
-      // Buffered JSON path — preserves the historical behaviour.
+      // Buffered JSON path
       const chunks = [];
       proxyRes.on('data', (chunk) => {
         chunks.push(chunk);
@@ -970,15 +993,17 @@ const proxyMeetingService = (method, path, req, res) => {
   proxyReq.on('error', (error) => {
     console.error('[gateway] meeting service proxy error', error);
     if (!res.headersSent) {
-      res.status(502).json({ message: 'Meeting service unavailable.' });
+      res.status(502).json({ message: 'Meeting service unavailable.', error: error.message });
     } else if (!res.writableEnded) {
       res.end();
     }
   });
 
-  if (hasBody) {
-    proxyReq.write(body);
+  // If a parsed body payload exists, write it out completely
+  if (bodyData) {
+    proxyReq.write(bodyData);
   }
+  
   proxyReq.end();
 };
 
@@ -1172,7 +1197,7 @@ app.post('/meetings/:meetingId/messages', async (req, res) => {
   );
 });
 
-app.patch('/meetings/:meetingId/qa-cache', async (req, res) => {
+app.post('/meetings/:meetingId/qa-cache', async (req, res) => {
   const meetingId = Number(req.params.meetingId);
   if (!Number.isFinite(meetingId) || meetingId <= 0) {
     return res.status(400).json({ message: 'Invalid meeting id.' });
@@ -1206,10 +1231,14 @@ app.patch('/meetings/:meetingId/qa-cache', async (req, res) => {
   return res.json({ ok: true, payload });
 });
 
-app.patch('/meetings/:meetingId/transcript', (req, res) =>
-  proxyMeetingService('PATCH', `/meetings/${encodeURIComponent(req.params.meetingId)}/transcript`, req, res),
-);
-
+app.post('/meetings/:meetingId/transcript', (req, res) => {
+  return proxyMeetingService(
+    'POST',
+    `/meetings/${encodeURIComponent(req.params.meetingId)}/transcript`,
+    req,
+    res
+  );
+});
 app.patch('/meetings/:meetingId/summary', (req, res) =>
   proxyMeetingService('PATCH', `/meetings/${encodeURIComponent(req.params.meetingId)}/summary`, req, res),
 );
@@ -1218,8 +1247,8 @@ app.post('/meetings/:meetingId/complete', (req, res) =>
   proxyMeetingService('POST', `/meetings/${encodeURIComponent(req.params.meetingId)}/complete`, req, res),
 );
 
-app.patch('/meetings/:meetingId/title', (req, res) =>
-  proxyMeetingService('PATCH', `/meetings/${encodeURIComponent(req.params.meetingId)}/title`, req, res),
+app.post('/meetings/:meetingId/title', (req, res) =>
+  proxyMeetingService('POST', `/meetings/${encodeURIComponent(req.params.meetingId)}/title`, req, res),
 );
 
 app.delete('/meetings/:meetingId', (req, res) =>
@@ -1234,8 +1263,8 @@ let server;
 if (useHttps) {
   server = https.createServer(
     {
-      key: fs.readFileSync('localhost-key.pem'),
-      cert: fs.readFileSync('localhost.pem'),
+      key: fs.readFileSync('0.0.0.0-key.pem'),
+      cert: fs.readFileSync('0.0.0.0.pem'),
     },
     app
   );
@@ -1581,6 +1610,8 @@ io.on('connection', (socket) => {
     });
   });
 });
+
+app.use(globalErrorHandler);
 
 server.listen(PORT, () => {
   const protocol = useHttps ? 'HTTPS' : 'HTTP';

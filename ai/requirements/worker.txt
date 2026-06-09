@@ -14,3 +14,5 @@ google-genai>=0.3.0
 sentence_transformers
 numpy==1.26.4
 requests==2.32.3
+huggingface-hub
+

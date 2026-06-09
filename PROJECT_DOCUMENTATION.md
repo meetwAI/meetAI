@@ -93,20 +93,20 @@ docker.exe compose exec -T postgres psql -U meetai -d meetai_dev -f /docker-entr
 - Get recent meetings (most-recent first):
 
 ```bash
-curl "http://localhost:8080/meetings/recent?limit=3"
+curl "http://0.0.0.0:8080/meetings/recent?limit=3"
 ```
 
 - Get a meeting by id:
 
 ```bash
-curl "http://localhost:8080/meetings/2"
+curl "http://0.0.0.0:8080/meetings/2"
 ```
 
 - Append a message to a meeting (POST) — body: `role` and `text` (gateway proxies to meeting-service):
 
 ```bash
 curl -X POST -H "Content-Type: application/json" -d '{"role":"user","text":"Hi there"}' \
-  http://localhost:8080/meetings/2/messages
+  http://0.0.0.0:8080/meetings/2/messages
 ```
 
 Response: the API returns the created message object with `id`, `role`, `text`, and `time` (ISO string).
@@ -116,7 +116,7 @@ Response: the API returns the created message object with `id`, `role`, `text`, 
 ```bash
 curl -X POST -H "Authorization: Bearer <ACCESS_TOKEN>" -H "Content-Type: application/json" \
   -d '{}' \
-  http://localhost:4010/meetings
+  http://0.0.0.0:4010/meetings
 ```
 
 Response:
@@ -132,7 +132,7 @@ Response:
 
 ```bash
 curl -X POST -H "Authorization: Bearer <ACCESS_TOKEN>" \
-  http://localhost:4010/meetings/123/complete
+  http://0.0.0.0:4010/meetings/123/complete
 ```
 
 Response:
@@ -150,7 +150,7 @@ Response:
 
 ```bash
 curl -X DELETE -H "Authorization: Bearer <ACCESS_TOKEN>" \
-  http://localhost:4010/meetings/123
+  http://0.0.0.0:4010/meetings/123
 ```
 
 Response:
@@ -167,7 +167,7 @@ Response:
 ```bash
 curl -X PATCH -H "Authorization: Bearer <ACCESS_TOKEN>" -H "Content-Type: application/json" \
   -d '{"title":"Weekly Sync"}' \
-  http://localhost:4010/meetings/123/title
+  http://0.0.0.0:4010/meetings/123/title
 ```
 
 Response:

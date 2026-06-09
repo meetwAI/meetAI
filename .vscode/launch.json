@@ -6,7 +6,7 @@
             "request": "attach",
             "name": "Attach Auth Service",
             "port": 9229,
-            "address": "localhost"
+            "address": "0.0.0.0"
         }
     ]
 }

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Optional
+from typing import Dict, List, Optional
 
 from google import genai
 from google.genai import types as genai_types
@@ -17,7 +17,7 @@ You analyse a single user question about a recorded meeting and extract any
 RETRIEVAL HINTS that will help find the right transcript chunks. You do NOT
 answer the question. You ONLY return the structured hints.
 
-Three kinds of hints, all optional:
+Four kinds of hints, first Three are all optional:
 
 1. speakers
    - List of speaker names or labels referenced by the question.
@@ -47,6 +47,10 @@ Three kinds of hints, all optional:
    - If no KNOWN SPEAKERS list is provided, apply the same transliteration
      rule: always return names in English (Latin) script, lowercased.
    - If the user did not name anyone specific, return [].
+   - IMPORTANT — when PREVIOUS CONVERSATION is provided, resolve pronouns
+     and references using it.  For example, if the previous exchange was
+     about "akram" and the user now asks "what else did he say?", return
+     ["akram"] (not an empty list).
    - Examples (assuming known speakers: akram, mario, john):
        "what did akramm say?"   -> ["akram"]
        "anything from maro?"    -> ["mario"]
@@ -57,6 +61,10 @@ Three kinds of hints, all optional:
 2. time_ranges
    - List of {start, end} objects in SECONDS from the start of the meeting.
    - Convert minute/hour phrasing to seconds. Both bounds may be null.
+   - IMPORTANT — when PREVIOUS CONVERSATION is provided, resolve relative
+     time references using it.  For example, if the previous answer
+     discussed something at minute 20 and the user asks "what about around
+     that time?", produce [{"start": 1100, "end": 1300}] (±~2 min).
    - Examples:
        "what did we say in the first ten minutes?"
            -> [{"start": 0, "end": 600}]
@@ -79,6 +87,20 @@ Three kinds of hints, all optional:
      or concept that needs semantic search, even if it also has time/speaker
      hints.
 
+4. resolved_question
+   - A SELF-CONTAINED rewrite of the user's question that replaces all
+     pronouns, vague references, and conversational shorthand with concrete
+     nouns/topics from the PREVIOUS CONVERSATION.
+   - This rewrite will be used for SEMANTIC SEARCH (vector embedding), so it
+     must be specific enough to match relevant transcript chunks.
+   - If the question is already self-contained, return it unchanged.
+   - If there is no PREVIOUS CONVERSATION, return the original question.
+   - Examples (given previous conversation about akram discussing Q3 budget):
+       "more on that"         -> "more details about the Q3 budget discussion"
+       "what else did he say?" -> "what else did akram say in the meeting?"
+       "elaborate"             -> "elaborate on akram's points about the Q3 budget"
+       "what about the deadline?" -> "what about the deadline?"  (already clear)
+
 When CURRENT MEETING DURATION is provided, it is the latest available audio
 timestamp in seconds. Use it to convert relative recency questions into
 absolute time ranges:
@@ -89,9 +111,41 @@ minutes", leave time_ranges empty rather than inventing an end timestamp.
 
 Return ONLY the JSON object that matches the response schema. No prose, no
 explanation. If the question contains no hints at all, return
-{"speakers": [], "time_ranges": [], "metadata_only": false}.
+{"speakers": [], "time_ranges": [], "metadata_only": false, "resolved_question": "<the original question>"}.
 """
 
+
+def _format_history(history: Optional[List[Dict[str, str]]]) -> str:
+    """
+    Render conversation history into a prompt section.
+
+    Returns an empty string when there is no history so the prompt is
+    unchanged for first-question requests.
+    """
+    if not history:
+        return ""
+
+    lines: List[str] = []
+    for turn in history:
+        role = turn.get("role", "user")
+        content = (turn.get("content") or "").strip()
+        if not content:
+            continue
+        # Truncate very long answers to keep the prompt within budget.
+        if len(content) > 500:
+            content = content[:500] + "..."
+        label = "User" if role == "user" else "Assistant"
+        lines.append(f"{label}: {content}")
+
+    if not lines:
+        return ""
+
+    block = "\n".join(lines)
+    return (
+        f"PREVIOUS CONVERSATION (use this to resolve pronouns, vague "
+        f"references like \"he\", \"that\", \"more on that\", and relative "
+        f"time references like \"around that time\"):\n{block}\n\n"
+    )
 
 class QuestionExtractor:
     """
@@ -116,6 +170,7 @@ class QuestionExtractor:
         question: str,
         current_duration: Optional[float] = None,
         known_speakers: Optional[list[str]] = None,
+        history: Optional[List[Dict[str, str]]] = None,
     ) -> ExtractedQuestion:
         """
         Parse one user question into ``ExtractedQuestion``.
@@ -130,6 +185,11 @@ class QuestionExtractor:
                 canonical name from this list instead of returning whatever
                 the user typed.
 
+                history: Recent conversation turns as a list of
+                ``{"role": "user"|"assistant", "content": "..."}`` dicts,
+                ordered chronologically.  Used to resolve pronouns and
+                vague references (e.g. "he", "that topic", "more on that").
+
         Always returns an ``ExtractedQuestion`` — empty lists on any error,
         so the caller never has to handle ``None``. Logs the underlying
         error so a recurrent extraction failure is still visible in ops.
@@ -139,10 +199,11 @@ class QuestionExtractor:
             return ExtractedQuestion()
 
         logger.info(
-            "QuestionExtractor.extract called: question_len=%s current_duration=%s known_speakers=%s",
+            "QuestionExtractor.extract called: question_len=%s current_duration=%s known_speakers=%s history_turns=%s",
             len(text),
             current_duration,
             known_speakers,
+            len(history) if history else 0,
         )
 
         duration_text = (
@@ -157,8 +218,11 @@ class QuestionExtractor:
         else:
             known_speakers_section = ""
 
+        history_section = _format_history(history)
+
         prompt = (
             f"{_PROMPT_INSTRUCTIONS}\n\n"
+            f"{history_section}"
             f"{known_speakers_section}"
             f"CURRENT MEETING DURATION:\n{duration_text}\n\n"
             f"USER QUESTION:\n{text}\n"

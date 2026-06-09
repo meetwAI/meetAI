@@ -23,6 +23,7 @@ class FasterWhisperASR:
         buffer_trimming: str = "segment",
         buffer_trimming_sec: float = 15.0,
         confidence_validation: bool = False,
+        use_auth_token: str = "",
     ):
         self.original_language = None if language == "auto" else language
         self.buffer_trimming = buffer_trimming
@@ -37,12 +38,20 @@ class FasterWhisperASR:
         self._model_dir = model_dir
         self._cache_dir = cache_dir
 
+        self.use_auth_token = use_auth_token
         self.model = self.load_model()
         self._log_runtime_device()
         self._detected_language = self.original_language
 
+        
+
     def load_model(self):
         from faster_whisper import WhisperModel
+        from huggingface_hub import login
+        
+        # Log in first if a token is provided
+        if self.use_auth_token:
+            login(token=self.use_auth_token)
 
         model_size_or_path = self._model_dir if self._model_dir else self._model_size
         logger.info(

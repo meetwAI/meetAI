@@ -42,7 +42,7 @@ Defined in `client/meetai-web/src/main.jsx`:
 
 Defined in `client/meetai-web/src/api/fetchWithAuth.js`:
 
-- Base URL is gateway: `http://localhost:4010`
+- Base URL is gateway: `http://0.0.0.0:4010`
 - Always sends cookies (`credentials: 'include'`) for access + refresh cookie flow
 - On first `401`, auto-calls `POST /refresh` and retries original request once
 
@@ -128,7 +128,7 @@ Defined in `client/meetai-web/src/api/socketClient.js`:
 
 - Maintains singleton socket instance
 - `connectSocket()` reconnects as needed and relies on auth cookies (`withCredentials: true`)
-- Uses websocket transport to gateway URL (default `http://localhost:4010`)
+- Uses websocket transport to gateway URL (default `http://0.0.0.0:4010`)
 
 ## Date Formatting
 

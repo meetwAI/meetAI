@@ -7,5 +7,5 @@
 // caused mixed-content failures in dev; both now share this constant.
 
 export const AUTH_BASE = (
-  import.meta.env.VITE_AUTH_URL || 'https://localhost:4010'
+  import.meta.env.VITE_AUTH_URL || 'http://0.0.0.0:4010'
 ).replace(/\/$/, '');
