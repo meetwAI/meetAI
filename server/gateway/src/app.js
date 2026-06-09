@@ -35,12 +35,12 @@ const meetingCacheClient = getRedisClient({
 
 const flushIntervals = new Map();
 
-const startFlushInterval = (meetingId) => {
+const startFlushInterval = (meetingId, userId, authToken) => {
   if (flushIntervals.has(meetingId)) {
     return;
   }
 
-  const interval = setInterval(() => {
+  const interval60 = setInterval(() => {
     void flushTranscriptBuffer(meetingId).catch((error) => {
       console.error('[gateway] transcript buffer flush failed', {
         meetingId,
@@ -49,7 +49,16 @@ const startFlushInterval = (meetingId) => {
     });
   }, 60_000);
 
-  flushIntervals.set(meetingId, interval);
+  const interval30 = setInterval(() => {
+    void flushFullTranscriptBuffer({ meetingId, userId, authToken }).catch((error) => {
+      console.error('[gateway] full transcript buffer flush failed', {
+        meetingId,
+        message: error?.message || 'unknown error',
+      });
+    });
+  }, 30_000);
+
+  flushIntervals.set(meetingId, { interval60, interval30 });
 };
 
 const flushTranscriptBuffer = async (meetingId) => {
@@ -91,14 +100,86 @@ const flushTranscriptBuffer = async (meetingId) => {
   );
 };
 
-const endMeetingTranscript = async (meetingId) => {
-  const interval = flushIntervals.get(meetingId);
-  if (interval) {
-    clearInterval(interval);
+const flushFullTranscriptBuffer = async ({ meetingId, userId, authToken, isFinal = false }) => {
+  const redisReady = await ensureRedisReady(meetingCacheClient, 'gateway');
+  if (!redisReady) {
+    return;
+  }
+
+  const key = `meeting:${meetingId}:full_transcript_buffer`;
+  const raw = await meetingCacheClient.get(key);
+  if (!raw) {
+    return;
+  }
+
+  let transcriptState;
+  try {
+    transcriptState = JSON.parse(raw);
+  } catch (error) {
+    console.error('[gateway] failed to parse full transcript buffer', { meetingId, error: error.message });
+    return;
+  }
+
+  if (!transcriptState) {
+    return;
+  }
+
+  try {
+    await new Promise((resolve, reject) => {
+      const targetUrl = new URL(`/meetings/${encodeURIComponent(meetingId)}/transcript`, MEETING_SERVICE_URL);
+      const client = targetUrl.protocol === 'https:' ? https : http;
+
+      const body = JSON.stringify(transcriptState);
+      const proxyReq = client.request(
+        targetUrl,
+        {
+          method: 'POST',
+          rejectUnauthorized: !ALLOW_SELF_SIGNED,
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(body),
+            Authorization: authToken ? `Bearer ${authToken}` : '',
+            'x-user-id': String(userId),
+          },
+        },
+        (proxyRes) => {
+          proxyRes.resume();
+          if (proxyRes.statusCode >= 200 && proxyRes.statusCode < 300) {
+            resolve();
+          } else {
+            reject(new Error(`Upstream returned ${proxyRes.statusCode}`));
+          }
+        },
+      );
+
+      proxyReq.on('error', reject);
+      proxyReq.write(body);
+      proxyReq.end();
+    });
+  } catch (error) {
+    console.error('[gateway] failed to flush full transcript to meeting service', {
+      meetingId,
+      message: error.message,
+    });
+  }
+
+  if (isFinal) {
+    await meetingCacheClient.del(key);
+  }
+};
+
+const endMeetingTranscript = async (meetingId, userId, authToken) => {
+  const intervals = flushIntervals.get(meetingId);
+  if (intervals) {
+    if (intervals.interval60) clearInterval(intervals.interval60);
+    if (intervals.interval30) clearInterval(intervals.interval30);
     flushIntervals.delete(meetingId);
   }
 
-  await flushTranscriptBuffer(meetingId);
+  await Promise.all([
+    flushTranscriptBuffer(meetingId),
+    flushFullTranscriptBuffer({ meetingId, userId, authToken, isFinal: true }),
+  ]);
 };
 
 
@@ -276,6 +357,39 @@ const buildAiWsUrl = ({ userId, meetingId }) => {
   target.searchParams.set('user_id', String(userId));
   target.searchParams.set('meeting_id', String(meetingId));
   return target.toString();
+};
+
+const normalizeLine = (line) => ({
+  speaker: Number.isFinite(Number(line?.speaker)) ? Number(line.speaker) : -1,
+  text: String(line?.text || '').trim(),
+  start: line?.start ?? null,
+  end: line?.end ?? null,
+  detected_language: line?.detected_language ?? null,
+});
+
+const lineSignature = (line) => {
+  const speaker = Number.isFinite(Number(line?.speaker)) ? Number(line.speaker) : -1;
+  const text = String(line?.text || '').trim();
+  const start = line?.start ?? '';
+  const end = line?.end ?? '';
+  return `${speaker}|${start}|${end}|${text}`;
+};
+
+const appendUniqueLines = (baseLines, incomingLines) => {
+  if (!Array.isArray(incomingLines) || incomingLines.length === 0) {
+    return Array.isArray(baseLines) ? baseLines : [];
+  }
+
+  const next = Array.isArray(baseLines) ? [...baseLines] : [];
+  incomingLines.forEach((line) => {
+    const key = lineSignature(line);
+    const lastKey = next.length ? lineSignature(next[next.length - 1]) : '';
+    if (!key || key === lastKey) {
+      return;
+    }
+    next.push(line);
+  });
+  return next;
 };
 
 const extractTranscriptText = (payload = {}) => {
@@ -1307,6 +1421,13 @@ io.on('connection', (socket) => {
   let didEmitEnded = false;
   let lastLoggedTranscript = '';
 
+  // State for structured transcript accumulation (session-scoped)
+  let cumulativeLines = [];
+  let segmentLines = [];
+
+  const userId = Number(socket.data.authUser?.id);
+  const authToken = String(socket.data.authToken || '');
+
   const emitSessionEnded = (payload = {}) => {
     if (!activeMeetingId || didEmitEnded) {
       return;
@@ -1351,8 +1472,6 @@ io.on('connection', (socket) => {
       }
     }
 
-    const userId = Number(socket.data.authUser?.id);
-    const authToken = String(socket.data.authToken || '');
     console.log('[gateway] meeting-session-start requested', { socketId: socket.id, meetingId, userId });
 
     if (!Number.isFinite(meetingId) || meetingId <= 0) {
@@ -1378,7 +1497,10 @@ io.on('connection', (socket) => {
     activeMeetingId = meetingId;
     didEmitEnded = false;
     lastLoggedTranscript = '';
-    startFlushInterval(meetingId);
+    cumulativeLines = [];
+    segmentLines = [];
+
+    startFlushInterval(meetingId, userId, authToken);
 
     ws.on('open', () => {
       console.log('[gateway] connected to ai service', { socketId: socket.id, meetingId, wsUrl });
@@ -1424,7 +1546,7 @@ io.on('connection', (socket) => {
           console.log('[gateway] ai session ready_to_stop', { meetingId });
           emitSessionEnded();
           try {
-            await endMeetingTranscript(meetingId);
+            await endMeetingTranscript(meetingId, userId, authToken);
           } catch (error) {
             console.error('[gateway] transcript buffer final flush failed', {
               meetingId,
@@ -1441,18 +1563,50 @@ io.on('connection', (socket) => {
           return;
         }
 
-        const confirmedText = Array.isArray(parsed?.lines)
-          ? parsed.lines.map((line) => String(line?.text || '').trim()).filter(Boolean).join(' ')
-          : '';
+        const incomingLines = (Array.isArray(parsed?.lines) ? parsed.lines : [])
+          .map((line) => normalizeLine(line))
+          .filter((line) => line.text);
 
-        if (confirmedText) {
-          const redisReady = await ensureRedisReady(meetingCacheClient, 'gateway');
-          if (redisReady) {
-            await meetingCacheClient.append(`meeting:${meetingId}:transcript_buffer`, ` ${confirmedText}`);
-            await meetingCacheClient.setNX(`meeting:${meetingId}:buffer_ts`, String(Date.now()));
-            await meetingCacheClient.expire(`meeting:${meetingId}:transcript_buffer`, 7200);
-            await meetingCacheClient.expire(`meeting:${meetingId}:buffer_ts`, 7200);
-          }
+        const startsWithPreviousSegment =
+          segmentLines.length > 0 &&
+          incomingLines.length >= segmentLines.length &&
+          segmentLines.every((line, index) => lineSignature(line) === lineSignature(incomingLines[index]));
+
+        let linesToAppend = incomingLines;
+        if (startsWithPreviousSegment) {
+          linesToAppend = incomingLines.slice(segmentLines.length);
+        }
+
+        const mergedLines = appendUniqueLines(cumulativeLines, linesToAppend);
+        cumulativeLines = mergedLines;
+        segmentLines = incomingLines;
+
+        const transcriptState = {
+          aiSessionId: String(parsed?.session_id || ''),
+          asrStatus: String(parsed?.status || 'active_transcription'),
+          lines: mergedLines,
+          bufferTranscription: String(parsed?.buffer_transcription || ''),
+          bufferDiarization: String(parsed?.buffer_diarization || ''),
+          updatedAt: new Date().toISOString(),
+        };
+
+        const redisReady = await ensureRedisReady(meetingCacheClient, 'gateway');
+        if (redisReady) {
+          await meetingCacheClient.set(
+            `meeting:${meetingId}:full_transcript_buffer`,
+            JSON.stringify(transcriptState),
+            'EX',
+            7200,
+          );
+        }
+
+        const confirmedText = linesToAppend.map((line) => line.text).join(' ');
+
+        if (confirmedText && redisReady) {
+          await meetingCacheClient.append(`meeting:${meetingId}:transcript_buffer`, ` ${confirmedText}`);
+          await meetingCacheClient.setNX(`meeting:${meetingId}:buffer_ts`, String(Date.now()));
+          await meetingCacheClient.expire(`meeting:${meetingId}:transcript_buffer`, 7200);
+          await meetingCacheClient.expire(`meeting:${meetingId}:buffer_ts`, 7200);
         }
 
         const transcriptText = extractTranscriptText(parsed);
@@ -1501,7 +1655,7 @@ io.on('connection', (socket) => {
         : String(reasonBuffer || '');
       console.log('[gateway] ai socket closed', { meetingId, wsUrl, code, reason });
       emitSessionEnded({ code, reason });
-      void endMeetingTranscript(meetingId).catch((error) => {
+      void endMeetingTranscript(meetingId, userId, authToken).catch((error) => {
         console.error('[gateway] transcript buffer final flush failed', {
           meetingId,
           message: error?.message || 'unknown error',
@@ -1560,7 +1714,7 @@ io.on('connection', (socket) => {
         return;
       }
 
-      void endMeetingTranscript(meetingId).catch((error) => {
+      void endMeetingTranscript(meetingId, userId, authToken).catch((error) => {
         console.error('[gateway] transcript buffer final flush failed', {
           meetingId,
           message: error?.message || 'unknown error',
@@ -1597,7 +1751,7 @@ io.on('connection', (socket) => {
       return;
     }
 
-    void endMeetingTranscript(meetingId).catch((error) => {
+    void endMeetingTranscript(meetingId, userId, authToken).catch((error) => {
       console.error('[gateway] transcript buffer final flush failed', {
         meetingId,
         message: error?.message || 'unknown error',

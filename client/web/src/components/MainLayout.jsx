@@ -311,15 +311,6 @@ const MainLayout = () => {
                 // }
 
                 applyTranscriptStateToCache(targetMeetingId, transcriptState);
-
-                fetchWithAuth(`/meetings/${targetMeetingId}/transcript`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(transcriptState),
-                })
-                    .catch((error) => {
-                        console.error('[meeting-client] failed to persist transcript state', error);
-                    });
             });
 
             socket.on('meeting-session-error', (payload) => {
@@ -439,7 +430,7 @@ const MainLayout = () => {
                 <NavLink
                     to="/"
                     end
-                    /={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
+                    className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
                     onClick={() => setMobileMenuOpen(false)}
                 >
                     Home
