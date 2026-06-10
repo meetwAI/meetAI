@@ -144,6 +144,37 @@ const buildSpeakerMapFromList = (speakers = []) => {
   }
   return map;
 };
+const getSpeakerMapSlotCount = (speakerMap = {}) => {
+  const normalizedSpeakerMap = normalizeSpeakerMap(speakerMap);
+  return Object.keys(normalizedSpeakerMap).reduce((max, key) => {
+    const match = key.match(/^speaker_(\d+)$/);
+    const slot = match ? Number(match[1]) : 0;
+    return Number.isFinite(slot) ? Math.max(max, slot) : max;
+  }, 0);
+};
+
+const countSpeakerSlots = ({ speakerMap = {}, participants = [], lines = [] } = {}) => {
+  const normalizedSpeakerMap = normalizeSpeakerMap(speakerMap);
+  const speakerMapCount = getSpeakerMapSlotCount(normalizedSpeakerMap);
+  const participantCount = normalizeSpeakers(participants, lines).length;
+  const transcriptCount = getTranscriptSpeakerCount(lines);
+  return Math.min(MAX_SPEAKER_COUNT, Math.max(speakerMapCount, participantCount, transcriptCount));
+};
+
+const buildFilledSpeakerMap = ({ speakerMap = {}, participants = [], lines = [] } = {}) => {
+  const normalizedSpeakerMap = normalizeSpeakerMap(speakerMap);
+  const count = countSpeakerSlots({ speakerMap: normalizedSpeakerMap, participants, lines });
+  if (!count) {
+    return {};
+  }
+
+  const filled = {};
+  for (let i = 1; i <= count; i += 1) {
+    const key = `speaker_${i}`;
+    filled[key] = normalizedSpeakerMap[key] || `Speaker ${i}`;
+  }
+  return filled;
+};
 
 const getTranscriptSpeakerCount = (lines = []) => {
   if (!Array.isArray(lines)) {
@@ -360,7 +391,10 @@ app.post('/meetings', (req, res) => {
   const startedAt = new Date();
   const title = String(req.body?.title || '').trim() || `Meeting ${startedAt.toLocaleString()}`;
   const participants = Array.isArray(req.body?.participants) ? req.body.participants : [];
-  const speakerMap = normalizeSpeakerMap(req.body?.speakerMap);
+  const speakerMap = buildFilledSpeakerMap({
+    speakerMap: req.body?.speakerMap || req.body?.speaker_map || req.body?.speakers,
+    participants,
+  });
 
   const transcript = {
     title,
@@ -1024,7 +1058,10 @@ app.post('/meetings/:meetingId/transcript', (req, res) => {
   // rendering the transcript, so the database stores clean lines.
   const isRealtime = asrStatus !== 'idle' && asrStatus !== 'done';
   const lines = cleanTranscriptLines(rawLines, { isRealtime });
-
+  const speakerMap = buildFilledSpeakerMap({
+    participants: normalizeSpeakers([], lines),
+    lines,
+  });
   return query(
     `UPDATE meetings
      SET full_transcript = COALESCE(full_transcript, '{}'::jsonb) || jsonb_build_object(
@@ -1033,9 +1070,17 @@ app.post('/meetings/:meetingId/transcript', (req, res) => {
        'lines', $3::jsonb,
        'bufferTranscription', to_jsonb($4::text),
        'bufferDiarization', to_jsonb($5::text),
-       'updatedAt', to_jsonb($6::text)
+       'updatedAt', to_jsonb($6::text),
+       'speakerMap', CASE
+         WHEN COALESCE(full_transcript->'speakerMap', '{}'::jsonb) = '{}'::jsonb THEN $7::jsonb
+         ELSE COALESCE(full_transcript->'speakerMap', '{}'::jsonb)
+       END
      )
-     WHERE id = $7 AND user_id = $8
+     , speaker_map = CASE
+         WHEN COALESCE(speaker_map, '{}'::jsonb) = '{}'::jsonb THEN $7::jsonb
+         ELSE speaker_map
+       END
+     WHERE id = $8 AND user_id = $9
      RETURNING id`,
     [
       aiSessionId,
@@ -1044,6 +1089,7 @@ app.post('/meetings/:meetingId/transcript', (req, res) => {
       bufferTranscription,
       bufferDiarization,
       updatedAt,
+      JSON.stringify(speakerMap),
       meetingId,
       userId,
     ],
@@ -1071,7 +1117,22 @@ app.patch('/meetings/:meetingId/speakers', (req, res) => {
     return res.status(400).json({ message: 'Invalid meeting id.' });
   }
 
-  const speakerMap = normalizeSpeakerMap(req.body?.speakers);
+  return fetchMeetingQaContext({ meetingId, userId })
+  .then((context) => {
+    if (!context) {
+      return res.status(404).json({ message: 'Meeting not found.' });
+    }
+
+    const speakerMap = buildFilledSpeakerMap({
+      speakerMap: context.speakerMap,
+      participants: context.participants,
+      lines: context.lines,
+    });
+    const nextSpeakerMap = buildFilledSpeakerMap({
+      speakerMap: { ...speakerMap, ...(req.body?.speakers || {}) },
+      participants: context.participants,
+      lines: context.lines,
+    });
 
   return query(
     `UPDATE meetings
@@ -1084,7 +1145,7 @@ app.patch('/meetings/:meetingId/speakers', (req, res) => {
          )
      WHERE id = $2 AND user_id = $3
      RETURNING speaker_map`,
-    [JSON.stringify(speakerMap), meetingId, userId],
+    [JSON.stringify(nextSpeakerMap), meetingId, userId],
   )
     .then((result) => {
       const row = result.rows[0];
@@ -1092,6 +1153,7 @@ app.patch('/meetings/:meetingId/speakers', (req, res) => {
         return res.status(404).json({ message: 'Meeting not found.' });
       }
       return res.json({ ok: true, ...toSpeakerMapResponse(row.speaker_map) });
+    });
     })
     .catch((error) => {
       console.error('[meeting-service] failed to save speaker map', error);

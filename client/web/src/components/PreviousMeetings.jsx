@@ -13,6 +13,8 @@ import {
   sidebarState,
   togglePreviousMeetingsSidebar,
   activeMeetingIdState,
+  isSummaryLoadingState,
+
 } from '../state';
 import { parseSseStream } from '../lib/sse'
 const normalizeTranscriptText = (value) => String(value || '').trim().replace(/\s+/g, ' ');
@@ -227,6 +229,45 @@ const deriveSpeakerBaseList = (meeting) => {
     .slice(0, MAX_SPEAKER_COUNT);
 };
 
+const getMeetingSpeakerMap = (meeting) => {
+  if (meeting?.speakerMap && typeof meeting.speakerMap === 'object' && !Array.isArray(meeting.speakerMap)) {
+    return meeting.speakerMap;
+  }
+  if (meeting?.speaker_map && typeof meeting.speaker_map === 'object' && !Array.isArray(meeting.speaker_map)) {
+    return meeting.speaker_map;
+  }
+  if (meeting?.speakers && typeof meeting.speakers === 'object' && !Array.isArray(meeting.speakers)) {
+    return meeting.speakers;
+  }
+  return null;
+};
+
+const getMeetingParticipants = (meeting) => {
+  const speakerMap = getMeetingSpeakerMap(meeting);
+  if (speakerMap) {
+    const fromMap = Object.values(speakerMap)
+      .map((name) => String(name || '').trim())
+      .filter(Boolean);
+    if (fromMap.length) {
+      return fromMap;
+    }
+  }
+
+  return Array.isArray(meeting?.participants)
+    ? meeting.participants.map((name) => String(name || '').trim()).filter(Boolean)
+    : [];
+};
+
+const getMeetingSpeakerCount = (meeting) => {
+  console.log("meeting info", meeting)
+  const speakerMap = getMeetingSpeakerMap(meeting);
+  if (speakerMap) {
+    return Object.keys(speakerMap).filter((key) => String(key || '').trim()).length;
+  }
+
+  return getMeetingParticipants(meeting).length;
+};
+
 const buildSpeakerDrafts = (baseList, count) => {
   const safeCount = Math.min(Math.max(0, count), MAX_SPEAKER_COUNT);
   const drafts = [...baseList].slice(0, safeCount);
@@ -239,9 +280,18 @@ const buildSpeakerDrafts = (baseList, count) => {
 
 export default function PreviousMeetings() {
   useSignals();
+  const { meetingid } = useParams();
   const API_URL = import.meta.env.VITE_AUTH_URL || import.meta.env.VITE_API_URL;
-  const [selectedId, setSelectedId] = useState(null);
+  const [selectedId, setSelectedId] = useState(meetingid || null);
+
+  // Sync selectedId from URL parameter when it changes
+  useEffect(() => {
+    if (meetingid) {
+      setSelectedId(meetingid);
+    }
+  }, [meetingid]);
   const [meetingFilter, setMeetingFilter] = useState('all');
+  const [searchQuery, setSearchQuery] = useState('');
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [calendarConnected, setCalendarConnected] = useState(false);
@@ -276,7 +326,6 @@ export default function PreviousMeetings() {
   const actionsMenuRef = useRef(null);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { meetingid } = useParams();
   const isSidebarOpen = sidebarState.value;
 
   const handleRetryCalendarStatus = () => {
@@ -484,6 +533,11 @@ export default function PreviousMeetings() {
     },
     staleTime: 10_000,
   });
+  const activeRouteMeeting = useMemo(() => {
+    if (!routeMeeting || !meetingid) return null;
+    if (String(routeMeeting.id) !== String(meetingid)) return null;
+    return routeMeeting;
+  }, [routeMeeting, meetingid]);
 
   const normalizedAppMeetings = useMemo(() => {
     const baseMeetings = meetings.map((meeting) => ({
@@ -491,7 +545,7 @@ export default function PreviousMeetings() {
       title: meeting.title,
       date: meeting.date,
       summary: meeting.summary,
-      participants: Array.isArray(meeting.participants) ? meeting.participants : [],
+      participants: getMeetingParticipants(meeting),
       speakerMap: meeting.speakerMap && typeof meeting.speakerMap === 'object'
         ? meeting.speakerMap
         : meeting.speaker_map && typeof meeting.speaker_map === 'object'
@@ -508,30 +562,30 @@ export default function PreviousMeetings() {
       endTime: meeting.endTime || meeting.end_time || null,
     }));
 
-    if (!routeMeeting) {
+    if (!activeRouteMeeting) {
       return baseMeetings;
     }
 
     const routeNormalized = {
-      id: routeMeeting.id,
-      title: routeMeeting.title,
-      date: routeMeeting.date,
-      summary: routeMeeting.summary,
-      participants: Array.isArray(routeMeeting.participants) ? routeMeeting.participants : [],
-      speakerMap: routeMeeting.speakerMap && typeof routeMeeting.speakerMap === 'object'
-        ? routeMeeting.speakerMap
-        : routeMeeting.speaker_map && typeof routeMeeting.speaker_map === 'object'
-          ? routeMeeting.speaker_map
+      id: activeRouteMeeting.id,
+      title: activeRouteMeeting.title,
+      date: activeRouteMeeting.date,
+      summary: activeRouteMeeting.summary,
+      participants: getMeetingParticipants(activeRouteMeeting),
+      speakerMap: activeRouteMeeting.speakerMap && typeof activeRouteMeeting.speakerMap === 'object'
+        ? activeRouteMeeting.speakerMap
+        : activeRouteMeeting.speaker_map && typeof activeRouteMeeting.speaker_map === 'object'
+          ? activeRouteMeeting.speaker_map
           : {},
-      messages: Array.isArray(routeMeeting.messages) ? routeMeeting.messages : [],
-      actionItems: Array.isArray(routeMeeting.actionItems) ? routeMeeting.actionItems : [],
-      lines: Array.isArray(routeMeeting.lines) ? routeMeeting.lines : [],
-      bufferTranscription: String(routeMeeting.bufferTranscription || ''),
-      bufferDiarization: String(routeMeeting.bufferDiarization || ''),
-      asrStatus: String(routeMeeting.asrStatus || 'idle'),
-      updatedAt: String(routeMeeting.updatedAt || ''),
-      startTime: routeMeeting.startTime || routeMeeting.start_time || null,
-      endTime: routeMeeting.endTime || routeMeeting.end_time || null,
+      messages: Array.isArray(activeRouteMeeting.messages) ? activeRouteMeeting.messages : [],
+      actionItems: Array.isArray(activeRouteMeeting.actionItems) ? activeRouteMeeting.actionItems : [],
+      lines: Array.isArray(activeRouteMeeting.lines) ? activeRouteMeeting.lines : [],
+      bufferTranscription: String(activeRouteMeeting.bufferTranscription || ''),
+      bufferDiarization: String(activeRouteMeeting.bufferDiarization || ''),
+      asrStatus: String(activeRouteMeeting.asrStatus || 'idle'),
+      updatedAt: String(activeRouteMeeting.updatedAt || ''),
+      startTime: activeRouteMeeting.startTime || activeRouteMeeting.start_time || null,
+      endTime: activeRouteMeeting.endTime || activeRouteMeeting.end_time || null,
     };
 
     const hasRouteMeeting = baseMeetings.some((meeting) => String(meeting.id) === String(routeNormalized.id));
@@ -541,7 +595,7 @@ export default function PreviousMeetings() {
       );
     }
     return [routeNormalized, ...baseMeetings];
-  }, [meetings, routeMeeting]);
+  }, [meetings, activeRouteMeeting]);
 
 
 
@@ -594,17 +648,33 @@ export default function PreviousMeetings() {
     });
   }, [normalizedAppMeetings, normalizedCalendarMeetings, meetingFilter, shouldLoadMeetings]);
 
+  const filteredMeetings = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) {
+      return normalizedMeetings;
+    }
+
+    return normalizedMeetings.filter((meeting) => {
+      const title = String(meeting.title || '').toLowerCase();
+      const summary = String(meeting.summary || '').toLowerCase();
+      const participants = (meeting.participants || []).join(' ').toLowerCase();
+
+      return title.includes(query) || summary.includes(query) || participants.includes(query);
+    });
+  }, [normalizedMeetings, searchQuery]);
+
   useEffect(() => {
     if (meetingid) {
-      setSelectedId(meetingid);
       return;
     }
-    if (normalizedMeetings?.length) {
-      setSelectedId((prev) => prev ?? normalizedMeetings[0].id);
-      return;
+    if (filteredMeetings?.length) {
+      setSelectedId((prev) => prev ?? filteredMeetings[0].id);
     }
-    setSelectedId(null);
-  }, [normalizedMeetings, meetingid]);
+    else {
+
+      setSelectedId(null);
+    }
+  }, [filteredMeetings, meetingid]);
 
   useEffect(() => {
     if (!showActionsMenu) {
@@ -815,7 +885,7 @@ export default function PreviousMeetings() {
       }
       return;
     }
-    
+
     if (!isEditingTitle || idChanged) {
       setTitleDraft(String(selectedMeeting.title || ''));
       if (idChanged) {
@@ -1138,7 +1208,7 @@ export default function PreviousMeetings() {
 
     try {
       const response = await fetchWithAuth(`/meetings/${selectedMeeting.id}/title`, {
-        method: 'PATCH',
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: nextTitle }),
       });
@@ -1248,6 +1318,27 @@ export default function PreviousMeetings() {
           </div>
           <p>Filter by upcoming, previous, or a custom date range.</p>
 
+          <div className="meeting-search-box" style={{ marginTop: '12px' }}>
+            <input
+              type="text"
+              placeholder="Search meetings..."
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              className="meeting-search-input"
+              style={{
+                width: '100%',
+                padding: '0.42rem 0.55rem',
+                borderRadius: '10px',
+                border: '1px solid rgb(56 189 248 / 35%)',
+                background: 'rgb(15 23 42 / 70%)',
+                color: '#f8fafc',
+                fontSize: '0.86rem',
+                outline: 'none',
+                boxSizing: 'border-box'
+              }}
+            />
+          </div>
+
           <div className="meeting-filter-row">
             <label className="meeting-filter-field">
               <span>From</span>
@@ -1287,7 +1378,12 @@ export default function PreviousMeetings() {
         {showMeetingsError && <p>{meetingsError.message || 'Unable to load meetings'}</p>}
         {showCalendarError && <p>{calendarEventsError.message || 'Unable to load Google Calendar events'}</p>}
         <div className="meeting-cards">
-          {normalizedMeetings.map((meeting, index) => (
+          {searchQuery && filteredMeetings.length === 0 && (
+            <p style={{ textAlign: 'center', marginTop: '20px', color: 'rgb(148 163 184)' }}>
+              No meetings found matching "{searchQuery}"
+            </p>
+          )}
+          {filteredMeetings.map((meeting, index) => (
             <button
               key={meeting.id}
               type="button"
@@ -1300,7 +1396,7 @@ export default function PreviousMeetings() {
                 if (meeting.isCalendarEvent) {
                   return;
                 }
-                queryClient.invalidateQueries({ queryKey: ['meeting', String(meeting.id)] });
+                // queryClient.invalidateQueries({ queryKey: ['meeting', String(meeting.id)] });
                 navigate(`/meetings/${meeting.id}`);
               }}
             >
@@ -1333,7 +1429,7 @@ export default function PreviousMeetings() {
                 <span className="meeting-date">{moment(meeting.date).format('DD-MMM-YYYY')}</span>
               </div>
               <div className="meeting-meta">
-                <span>{meeting.participants.length} participants</span>
+                <span>{getMeetingSpeakerCount(meeting)} participants</span>
                 <span>View conversation</span>
               </div>
             </button>
@@ -1385,11 +1481,11 @@ export default function PreviousMeetings() {
               </div>
               <div className="meeting-header-actions">
                 <div className="meeting-tags">
-                  {selectedMeeting.participants.map((name) => (
+                  {/* {selectedMeeting.participants.map((name) => (
                     <span key={name} className="meeting-tag">
                       {name}
                     </span>
-                  ))}
+                  ))} */}
                 </div>
                 <div className="meeting-header-actions-row">
                   {!isCalendarEventSelected && (
@@ -1562,25 +1658,28 @@ export default function PreviousMeetings() {
             {speakerSaveError && <p className="recap-summary">{speakerSaveError}</p>}
             {deleteError && <p className="recap-summary">{deleteError}</p>}
 
-            {selectedMeeting.summary && (
+            {(selectedMeeting.summary || (isSummaryLoadingState.value && String(selectedMeeting.id) === String(selectedId))) && (
 
               <div className="meeting-detail-summary">
                 <div className="summary-row">
                   <h4>{isCalendarEventSelected ? 'Details' : 'Summary'}</h4>
-
-                  <button
-                    type="button"
-                    className="meeting-transcript-toggle summary-toggle"
-                    aria-expanded={isSummaryOpen}
-                    onClick={() => setIsSummaryOpen((v) => !v)}
-                  >
-                    {isSummaryOpen ? 'Hide' : 'Show'}
-                  </button>
+                  {selectedMeeting.summary && (
+                    <button
+                      type="button"
+                      className="meeting-transcript-toggle summary-toggle"
+                      aria-expanded={isSummaryOpen}
+                      onClick={() => setIsSummaryOpen((v) => !v)}
+                    >
+                      {isSummaryOpen ? 'Hide' : 'Show'}
+                    </button>
+                  )}
 
                 </div>
 
                 <div className={`summary-content${isSummaryOpen ? '' : ' collapsed'}`}>
-                  {selectedMeeting.summary ? (
+                  {isSummaryLoadingState.value && !selectedMeeting.summary ? (
+                    <p className="summary-loading">Generating summary... <span className="cursor-blink">▍</span></p>
+                  ) : selectedMeeting.summary ? (
                     <div className="summary-markdown">
                       <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>
                         {selectedMeeting.summary}
@@ -1619,21 +1718,26 @@ export default function PreviousMeetings() {
                     const displayText = message.content ?? message.text ?? '';
                     const displayTime = message.date ?? message.time ?? '';
                     return (
-                    <div
-                      key={message.id}
-                      className={`message-row ${message.role === 'assistant' ? 'assistant' : 'user'}`}
-                    >
+                      // <div
+                      //   key={message.id}
+                      //   className={`message-row ${message.role === 'assistant' ? 'assistant' : 'user'}`}
+                      // >
                       <div
-                        className={`message-bubble${message.streaming ? ' streaming' : ''}${message.error ? ' error' : ''
-                          }`}
+                        className={`message-row ${message.role === 'assistant' ? 'assistant' : 'user'}`}
+                        key={message.id}
                       >
-                        <p>
-                          {displayText}
-                          {message.streaming ? <span className="cursor-blink">▍</span> : null}
-                        </p>
-                        <span className="message-time">{displayTime ? moment(displayTime).format('DD-MMM-YYYY HH:mm') : ''}</span>
+                        <div
+                          className={`message-bubble${message.streaming ? ' streaming' : ''}${message.error ? ' error' : ''
+                            }`}
+                        >
+                          <p>
+                            {displayText}
+                            {message.streaming ? <span className="cursor-blink">▍</span> : null}
+                          </p>
+                          <span className="message-time">{displayTime ? moment(displayTime).format('DD-MMM-YYYY HH:mm') : ''}</span>
+                        </div>
                       </div>
-                    </div>
+
                     );
                   })}
                 </div>
@@ -1734,11 +1838,18 @@ export default function PreviousMeetings() {
                     const isLastGroup = groupIndex === transcriptState.groups.length - 1;
                     const timeLabel =
                       group?.start != null && group?.end != null ? `${group.start} - ${group.end}` : '';
+
+                    const speakerNum = Number(group?.speaker);
+                    const speakerIdx = speakerNum - 1;
+                    const speakerName = speakerDrafts[speakerIdx];
+
                     const speakerLabel =
-                      Number(group?.speaker) === -2
+                      speakerNum === -2
                         ? 'Silence'
-                        : `Speaker ${Number.isFinite(Number(group?.speaker)) ? Number(group.speaker) : '-'}`;
-                    const showMeta = !(Number(group?.speaker) === -1 && !timeLabel);
+                        : speakerName || (Number.isFinite(speakerNum) ? `Speaker ${speakerNum}` : '-');
+                    const speakerColor = SPEAKER_BADGE_COLORS[speakerIdx] || 'inherit';
+
+                    const showMeta = !(speakerNum === -1 && !timeLabel);
                     const bufferParts = [
                       transcriptState.bufferDiarization,
                       transcriptState.bufferTranscription,
@@ -1748,7 +1859,8 @@ export default function PreviousMeetings() {
                       <article className="meeting-transcript-line" key={`speaker-${group.speaker}-${groupIndex}`}>
                         {showMeta && (
                           <div className="meeting-transcript-meta">
-                            <span>{speakerLabel}</span>
+                            <span style={{ color: speakerColor, fontWeight: '600' }}>{speakerLabel}</span>
+
                             {timeLabel && <span>{timeLabel}</span>}
                           </div>
                         )}

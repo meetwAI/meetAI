@@ -23,4 +23,6 @@ export const liveTranscriptSignal = signal({
   bufferDiarization: '',
   asrStatus: 'idle',
   updatedAt: null,
-});
+});
+
+export const isSummaryLoadingState = signal(false);

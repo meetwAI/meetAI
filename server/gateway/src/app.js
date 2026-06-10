@@ -738,13 +738,16 @@ const updateMeetingQaCache = async ({
   return null;
 };
 
-const generateAndPersistMOM = async ({ meetingId, userId, authToken }) => {
+const generateAndPersistMOM = async ({ meetingId, userId, authToken, socket }) => {
   try {
     if (!Number.isInteger(meetingId) || meetingId <= 0) {
       throw new Error(`Invalid meetingId for MOM generation: ${meetingId}`);
     }
     if (!Number.isInteger(userId) || userId <= 0) {
       throw new Error(`Invalid userId for MOM generation: ${userId}`);
+    }
+    if (socket) {
+      socket.emit('meeting-summary-loading', { meetingId });
     }
 
     let speakerMap = null;
@@ -788,6 +791,9 @@ const generateAndPersistMOM = async ({ meetingId, userId, authToken }) => {
 
     const { answer } = await aiRes.json();
     if (!answer) {
+      if (socket) {
+        socket.emit('meeting-summary-ready', { meetingId, summary: null });
+      }
       return;
     }
 
@@ -806,8 +812,17 @@ const generateAndPersistMOM = async ({ meetingId, userId, authToken }) => {
     }
 
     console.log(`[gateway] MOM generated and saved for meeting ${meetingId}`);
+    if (socket) {
+      socket.emit('meeting-summary-ready', { meetingId, summary: answer });
+    }
   } catch (error) {
     console.error(`[gateway] Failed to generate/persist MOM for meeting ${meetingId}:`, error);
+    if (socket) {
+      socket.emit('meeting-summary-error', {
+        meetingId,
+        message: error?.message || 'Failed to generate summary.',
+      });
+    }
   }
 };
 
@@ -1558,7 +1573,7 @@ io.on('connection', (socket) => {
           activeMeetingId = null;
           lastLoggedTranscript = '';
 
-          generateAndPersistMOM({ meetingId, userId, authToken })
+          generateAndPersistMOM({ meetingId, userId, authToken, socket })
             .catch((err) => console.error('[gateway] MOM generation failed', err));
           return;
         }

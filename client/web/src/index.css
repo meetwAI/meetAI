@@ -187,3 +187,22 @@ button:focus-visible {
     transform: scale(1);
   }
 }
+
+
+.summary-loading {
+  color: var(--zen-brown-light);
+  font-style: italic;
+  font-size: 0.95rem;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cursor-blink {
+  animation: blink 1s step-end infinite;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
