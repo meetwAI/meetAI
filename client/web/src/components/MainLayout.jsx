@@ -5,7 +5,7 @@ import './MainLayout.css';
 import { getSocket, connectSocket } from '../lib/socket';
 import { fetchWithAuth } from '../lib/http';
 import { Menu, Mic, Plus } from 'lucide-react';
-import { activeMeetingIdState } from '../state';
+import { activeMeetingIdState, isSummaryLoadingState } from '../state';
 
 const MainLayout = () => {
     const navigate = useNavigate();
@@ -21,8 +21,86 @@ const MainLayout = () => {
     const processorNodeRef = React.useRef(null);
     const socketRef = React.useRef(null);
     const activeMeetingIdRef = React.useRef(null);
+    const lastMeetingIdRef = React.useRef(null);
     const cumulativeLinesRef = React.useRef([]);
     const segmentLinesRef = React.useRef([]);
+
+    const applySummaryToCache = React.useCallback((meetingId, summary) => {
+        const meetingIdString = String(meetingId);
+        queryClient.setQueryData(['meeting', String(meetingId)], (current) => {
+            if (!current || String(current.id) !== String(meetingId)) {
+                return current;
+            }
+            return { ...current, summary };
+        });
+
+        queryClient.setQueriesData({ queryKey: ['meetings', 'dummy'] }, (current) => {
+            const meetings = Array.isArray(current) ? current : [];
+            return meetings.map((meeting) => {
+                if (String(meeting.id) !== meetingIdString) {
+                    return meeting;
+                }
+                return { ...meeting, summary };
+            });
+        });
+    }, [queryClient]);
+
+    const applyTranscriptStateToCache = React.useCallback((meetingId, transcriptState) => {
+        const meetingIdString = String(meetingId);
+        queryClient.setQueryData(['meeting', String(meetingId)], (current) => {
+            if (!current || String(current.id) !== String(meetingId)) {
+                return current;
+            }
+            return { ...current, ...transcriptState };
+        });
+
+        queryClient.setQueriesData({ queryKey: ['meetings', 'dummy'] }, (current) => {
+            const meetings = Array.isArray(current) ? current : [];
+            return meetings.map((meeting) => {
+                if (String(meeting.id) !== meetingIdString) {
+                    return meeting;
+                }
+                return { ...meeting, ...transcriptState };
+            });
+        });
+    }, [queryClient]);
+
+    React.useEffect(() => {
+        const socket = getSocket() || connectSocket();
+
+        const handleSummaryLoading = (payload) => {
+            if (Number(payload?.meetingId) === Number(lastMeetingIdRef.current)) {
+                isSummaryLoadingState.value = true;
+            }
+        };
+
+        const handleSummaryReady = (payload) => {
+            const mid = Number(payload?.meetingId);
+            if (mid > 0) {
+                if (mid === Number(lastMeetingIdRef.current)) {
+                    isSummaryLoadingState.value = false;
+                }
+                applySummaryToCache(mid, payload.summary);
+            }
+        };
+
+        const handleSummaryError = (payload) => {
+            if (Number(payload?.meetingId) === Number(lastMeetingIdRef.current)) {
+                isSummaryLoadingState.value = false;
+                console.error('[summary-error]', payload.message);
+            }
+        };
+
+        socket.on('meeting-summary-loading', handleSummaryLoading);
+        socket.on('meeting-summary-ready', handleSummaryReady);
+        socket.on('meeting-summary-error', handleSummaryError);
+
+        return () => {
+            socket.off('meeting-summary-loading', handleSummaryLoading);
+            socket.off('meeting-summary-ready', handleSummaryReady);
+            socket.off('meeting-summary-error', handleSummaryError);
+        };
+    }, [applySummaryToCache]);
 
     const normalizeLine = React.useCallback((line) => ({
         speaker: Number.isFinite(Number(line?.speaker)) ? Number(line.speaker) : -1,
@@ -56,26 +134,6 @@ const MainLayout = () => {
         });
         return next;
     }, [lineSignature]);
-
-    const applyTranscriptStateToCache = React.useCallback((meetingId, transcriptState) => {
-        const meetingIdString = String(meetingId);
-        queryClient.setQueryData(['meeting', String(meetingId)], (current) => {
-            if (!current || String(current.id) !== String(meetingId)) {
-                return current;
-            }
-            return { ...current, ...transcriptState };
-        });
-
-        queryClient.setQueriesData({ queryKey: ['meetings', 'dummy'] }, (current) => {
-            const meetings = Array.isArray(current) ? current : [];
-            return meetings.map((meeting) => {
-                if (String(meeting.id) !== meetingIdString) {
-                    return meeting;
-                }
-                return { ...meeting, ...transcriptState };
-            });
-        });
-    }, [queryClient]);
 
     const stopCapture = React.useCallback(async () => {
         const completedMeetingId = activeMeetingIdRef.current;
@@ -111,6 +169,7 @@ const MainLayout = () => {
                 socketRef.current.off('connect_error');
                 socketRef.current.off('meeting-transcript-update');
                 socketRef.current.off('meeting-session-error');
+                // We keep summary listeners active so they can fire after audio session stops
             } catch {
                 // ignore
             }
@@ -170,7 +229,9 @@ const MainLayout = () => {
                 throw new Error('Failed to create meeting.');
             }
             activeMeetingIdRef.current = meetingId;
+            lastMeetingIdRef.current = meetingId;
             activeMeetingIdState.value = meetingId;
+            isSummaryLoadingState.value = false;
             queryClient.setQueryData(['meeting', String(meetingId)], {
                 id: meetingId,
                 title: `Meeting ${meetingId}`,

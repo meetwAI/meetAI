@@ -13,6 +13,7 @@ import {
   sidebarState,
   togglePreviousMeetingsSidebar,
   activeMeetingIdState,
+  isSummaryLoadingState,
 } from '../state';
 import { parseSseStream } from '../lib/sse'
 const normalizeTranscriptText = (value) => String(value || '').trim().replace(/\s+/g, ' ');
@@ -1166,7 +1167,7 @@ export default function PreviousMeetings() {
 
     try {
       const response = await fetchWithAuth(`/meetings/${selectedMeeting.id}/title`, {
-        method: 'PATCH',
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: nextTitle }),
       });
@@ -1629,25 +1630,27 @@ export default function PreviousMeetings() {
             {speakerSaveError && <p className="recap-summary">{speakerSaveError}</p>}
             {deleteError && <p className="recap-summary">{deleteError}</p>}
 
-            {selectedMeeting.summary && (
-
+            {(selectedMeeting.summary || (isSummaryLoadingState.value && String(selectedMeeting.id) === String(selectedId))) && (
               <div className="meeting-detail-summary">
                 <div className="summary-row">
                   <h4>{isCalendarEventSelected ? 'Details' : 'Summary'}</h4>
 
-                  <button
-                    type="button"
-                    className="meeting-transcript-toggle summary-toggle"
-                    aria-expanded={isSummaryOpen}
-                    onClick={() => setIsSummaryOpen((v) => !v)}
-                  >
-                    {isSummaryOpen ? 'Hide' : 'Show'}
-                  </button>
-
+                  {selectedMeeting.summary && (
+                    <button
+                      type="button"
+                      className="meeting-transcript-toggle summary-toggle"
+                      aria-expanded={isSummaryOpen}
+                      onClick={() => setIsSummaryOpen((v) => !v)}
+                    >
+                      {isSummaryOpen ? 'Hide' : 'Show'}
+                    </button>
+                  )}
                 </div>
 
                 <div className={`summary-content${isSummaryOpen ? '' : ' collapsed'}`}>
-                  {selectedMeeting.summary ? (
+                  {isSummaryLoadingState.value && !selectedMeeting.summary ? (
+                    <p className="summary-loading">Generating summary... <span className="cursor-blink">▍</span></p>
+                  ) : selectedMeeting.summary ? (
                     <div className="summary-markdown">
                       <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>
                         {selectedMeeting.summary}
@@ -1664,8 +1667,7 @@ export default function PreviousMeetings() {
                   )}
                 </div>
               </div>
-            )
-            }
+            )}
 
             {!!selectedMeeting.actionItems?.length && (
               <div className="meeting-detail-summary">
@@ -1801,11 +1803,16 @@ export default function PreviousMeetings() {
                     const isLastGroup = groupIndex === transcriptState.groups.length - 1;
                     const timeLabel =
                       group?.start != null && group?.end != null ? `${group.start} - ${group.end}` : '';
+                    const speakerNum = Number(group?.speaker);
+                    const speakerIdx = speakerNum - 1;
+                    const speakerName = speakerDrafts[speakerIdx];
                     const speakerLabel =
-                      Number(group?.speaker) === -2
+                      speakerNum === -2
                         ? 'Silence'
-                        : `Speaker ${Number.isFinite(Number(group?.speaker)) ? Number(group.speaker) : '-'}`;
-                    const showMeta = !(Number(group?.speaker) === -1 && !timeLabel);
+                        : speakerName || (Number.isFinite(speakerNum) ? `Speaker ${speakerNum}` : '-');
+                    const speakerColor = SPEAKER_BADGE_COLORS[speakerIdx] || 'inherit';
+
+                    const showMeta = !(speakerNum === -1 && !timeLabel);
                     const bufferParts = [
                       transcriptState.bufferDiarization,
                       transcriptState.bufferTranscription,
@@ -1815,7 +1822,7 @@ export default function PreviousMeetings() {
                       <article className="meeting-transcript-line" key={`speaker-${group.speaker}-${groupIndex}`}>
                         {showMeta && (
                           <div className="meeting-transcript-meta">
-                            <span>{speakerLabel}</span>
+                            <span style={{ color: speakerColor, fontWeight: '600' }}>{speakerLabel}</span>
                             {timeLabel && <span>{timeLabel}</span>}
                           </div>
                         )}
