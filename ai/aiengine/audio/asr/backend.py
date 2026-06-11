@@ -84,9 +84,16 @@ class FasterWhisperASR:
             audio,
             language=self.original_language,
             initial_prompt=init_prompt,
-            beam_size=5,
+            beam_size=2,
             word_timestamps=True,
-            condition_on_previous_text=True,
+            condition_on_previous_text=False, # Default True
+            
+            compression_ratio_threshold=None,
+            temperature=0.0,                  # no sampling fallback retries
+            best_of=1,
+            log_prob_threshold=None,          # skips log prob check
+            no_speech_threshold=None,
+
             **self.transcribe_kargs,
         )
         if info is not None and getattr(info, "language", None):
