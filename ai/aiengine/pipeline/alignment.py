@@ -161,31 +161,65 @@ class TokensAlignment:
                 ):
                     diarization_buffer += punctuation_segment.text
                 else:
-                    max_overlap = 0.0
-                    max_overlap_speaker = 1
-                    for diarization_segment in diarization_segments:
-                        intersec = self.intersection_duration(
-                            punctuation_segment, diarization_segment
-                        )
-                        if intersec > max_overlap:
-                            max_overlap = intersec
-                            max_overlap_speaker = diarization_segment.speaker + 1
-                    punctuation_segment.speaker = max_overlap_speaker
                     if punctuation_segment.tokens:
                         for token in punctuation_segment.tokens:
                             if not token.is_silence():
+                                max_overlap = 0.0
+                                max_overlap_speaker = 1
+                                for diarization_segment in diarization_segments:
+                                    intersec = self.intersection_duration(
+                                        token, diarization_segment
+                                    )
+                                    # >= ensures newer diarization corrections
+                                    # (appended later) win over older guesses
+                                    # when they cover the same timespan.
+                                    if intersec >= max_overlap:
+                                        max_overlap = intersec
+                                        max_overlap_speaker = (
+                                            diarization_segment.speaker + 1
+                                        )
                                 token.speaker = max_overlap_speaker
 
-        segments = []
-        if punctuation_segments:
-            segments = [punctuation_segments[0]]
-            for segment in punctuation_segments[1:]:
-                if segment.speaker == segments[-1].speaker:
-                    if segments[-1].text:
-                        segments[-1].text += segment.text
-                    segments[-1].end = segment.end
-                else:
-                    segments.append(segment)
+        # --- Fix 3: Rebuild output segments by walking tokens chronologically
+        # and splitting whenever the speaker changes.  A single punctuation
+        # chunk that spans multiple speakers now produces multiple clean
+        # segments instead of being collapsed under one winner.
+        segments: List[Segment] = []
+        current_tokens: List[ASRToken] = []
+        current_speaker: Optional[int] = None
+
+        for punc_seg in punctuation_segments:
+            if punc_seg.is_silence():
+                # Flush any pending speech before the silence marker.
+                if current_tokens:
+                    seg = Segment.from_tokens(current_tokens)
+                    seg.speaker = current_speaker
+                    segments.append(seg)
+                    current_tokens = []
+                    current_speaker = None
+                segments.append(punc_seg)
+            else:
+                if not punc_seg.tokens:
+                    continue
+                for token in punc_seg.tokens:
+                    if token.is_silence():
+                        continue
+                    if current_speaker is None:
+                        current_speaker = token.speaker
+                    if token.speaker != current_speaker:
+                        # Speaker changed mid-chunk — emit what we have so far.
+                        seg = Segment.from_tokens(current_tokens)
+                        seg.speaker = current_speaker
+                        segments.append(seg)
+                        current_tokens = []
+                        current_speaker = token.speaker
+                    current_tokens.append(token)
+
+        # Flush any tokens that did not end on a speaker change.
+        if current_tokens:
+            seg = Segment.from_tokens(current_tokens)
+            seg.speaker = current_speaker
+            segments.append(seg)
 
         return segments, diarization_buffer
 
