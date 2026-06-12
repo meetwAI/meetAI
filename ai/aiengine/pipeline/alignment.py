@@ -12,7 +12,7 @@ from aiengine.models.timed import (
 )
 
 
-_DEFAULT_RETENTION_SECONDS: float = 300.0
+_DEFAULT_RETENTION_SECONDS: float = 86400.0
 
 
 class TokensAlignment:

@@ -19,68 +19,6 @@ import {
 import { parseSseStream } from '../lib/sse'
 const normalizeTranscriptText = (value) => String(value || '').trim().replace(/\s+/g, ' ');
 
-const mergeTranscriptText = (baseText, nextText) => {
-  const base = normalizeTranscriptText(baseText);
-  const next = normalizeTranscriptText(nextText);
-
-  if (!base) return next;
-  if (!next) return base;
-  if (base === next) return base;
-  if (next.startsWith(base)) return next;
-  if (base.startsWith(next)) return base;
-
-  const baseWords = base.split(' ');
-  const nextWords = next.split(' ');
-  const maxOverlap = Math.min(baseWords.length, nextWords.length);
-  let overlap = 0;
-
-  for (let i = 1; i <= maxOverlap; i += 1) {
-    const baseSlice = baseWords.slice(baseWords.length - i).join(' ');
-    const nextSlice = nextWords.slice(0, i).join(' ');
-    if (baseSlice === nextSlice) {
-      overlap = i;
-    }
-  }
-
-  if (overlap) {
-    return baseWords.concat(nextWords.slice(overlap)).join(' ');
-  }
-
-  return `${base} ${next}`.trim();
-};
-
-const trimTranscriptContinuation = (previousText, nextText) => {
-  const base = normalizeTranscriptText(previousText);
-  const next = normalizeTranscriptText(nextText);
-
-  if (!next) return '';
-  if (!base) return next;
-  if (next === base) return '';
-  if (base.startsWith(next)) return '';
-  if (next.startsWith(base)) {
-    return next.slice(base.length).trimStart();
-  }
-
-  const baseWords = base.split(' ');
-  const nextWords = next.split(' ');
-  const maxOverlap = Math.min(baseWords.length, nextWords.length);
-  let overlap = 0;
-
-  for (let i = 1; i <= maxOverlap; i += 1) {
-    const baseSlice = baseWords.slice(baseWords.length - i).join(' ');
-    const nextSlice = nextWords.slice(0, i).join(' ');
-    if (baseSlice === nextSlice) {
-      overlap = i;
-    }
-  }
-
-  if (overlap) {
-    return nextWords.slice(overlap).join(' ').trim();
-  }
-
-  return next;
-};
-
 const normalizeCalendarText = (value) => String(value || '').trim();
 
 const stripCalendarHtml = (value) =>
@@ -785,75 +723,40 @@ export default function PreviousMeetings() {
     let bufferDiarization = normalizeTranscriptText(selectedMeeting.bufferDiarization);
     const rawLines = Array.isArray(selectedMeeting.lines) ? selectedMeeting.lines : [];
 
-    // For realtime meetings (actively recording) sort by end time so partial
-    // chunks stream in the right order. For completed meetings sort by start.
+    // Always sort by start time for consistent chronological grouping
     const lines = rawLines.slice().sort((a, b) => {
-      const aVal = isMeetingRealtime ? (a?.end ?? a?.start) : (a?.start ?? a?.end);
-      const bVal = isMeetingRealtime ? (b?.end ?? b?.start) : (b?.start ?? b?.end);
-      if (aVal == null && bVal == null) return 0;
-      if (aVal == null) return 1;
-      if (bVal == null) return -1;
+      const aVal = a?.start ?? a?.end ?? 0;
+      const bVal = b?.start ?? b?.end ?? 0;
       return Number(aVal) - Number(bVal);
     });
 
     const groups = [];
-    const lastTextBySpeaker = new Map();
-    // Maps "speaker:start" → group index so updated ASR chunks (same utterance,
-    // updated text, arriving after another speaker's chunk due to sort order)
-    // are merged back into their original group rather than creating a new box.
-    const groupKeyMap = new Map();
 
     lines.forEach((line) => {
       const speakerValue = Number.isFinite(Number(line?.speaker))
         ? Number(line.speaker)
         : line?.speaker ?? null;
       const text = normalizeTranscriptText(line?.text);
+      if (!text) return;
+
       const lineStart = line?.start ?? null;
       const lineEnd = line?.end ?? null;
-      const previousText = lastTextBySpeaker.get(speakerValue) || '';
-      const trimmedText = trimTranscriptContinuation(previousText, text);
 
-      if (!trimmedText) {
-        if (text) {
-          lastTextBySpeaker.set(speakerValue, mergeTranscriptText(previousText, text));
-        }
-        return;
-      }
+      const lastGroup = groups[groups.length - 1];
 
-      // Key identifies a specific utterance segment by speaker + start time.
-      // If two lines share the same speaker and start, the second is an updated
-      // version of the same chunk — merge into the original group in-place.
-      const segmentKey = lineStart != null ? `${speakerValue}:${lineStart}` : null;
-      const existingIdx = segmentKey != null ? groupKeyMap.get(segmentKey) : undefined;
-
-      if (existingIdx !== undefined) {
-        // Updated chunk for an existing segment — patch the original group.
-        const existing = groups[existingIdx];
-        existing.text = mergeTranscriptText(existing.text, trimmedText);
-        if (lineEnd != null) existing.end = lineEnd;
+      if (lastGroup && lastGroup.speaker === speakerValue) {
+        // Consecutive same-speaker line — extend the current group.
+        lastGroup.text = `${lastGroup.text} ${text}`.trim();
+        if (lastGroup.start == null && lineStart != null) lastGroup.start = lineStart;
+        if (lineEnd != null) lastGroup.end = lineEnd;
       } else {
-        const lastGroup = groups[groups.length - 1];
-        if (lastGroup && lastGroup.speaker === speakerValue) {
-          // Consecutive same-speaker line — extend the current group.
-          lastGroup.text = mergeTranscriptText(lastGroup.text, trimmedText);
-          if (lastGroup.start == null && lineStart != null) lastGroup.start = lineStart;
-          if (lineEnd != null) lastGroup.end = lineEnd;
-          if (segmentKey != null) groupKeyMap.set(segmentKey, groups.length - 1);
-        } else {
-          // New speaker turn — open a fresh group.
-          const newIdx = groups.length;
-          groups.push({
-            speaker: speakerValue,
-            text: trimmedText,
-            start: lineStart,
-            end: lineEnd,
-          });
-          if (segmentKey != null) groupKeyMap.set(segmentKey, newIdx);
-        }
-      }
-
-      if (text) {
-        lastTextBySpeaker.set(speakerValue, mergeTranscriptText(previousText, text));
+        // New speaker turn — open a fresh group.
+        groups.push({
+          speaker: speakerValue,
+          text: text,
+          start: lineStart,
+          end: lineEnd,
+        });
       }
     });
 
