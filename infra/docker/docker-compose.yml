@@ -75,7 +75,7 @@ services:
     environment:
       DATABASE_URL: postgresql://meetai:${POSTGRES_PASSWORD:-meetai_pass}@postgres:5432/meetai_dev
       QA_SERVICE_URL: http://qa-service:8100
-      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-https://5173-01ktvk5ff6h8e14hscmjy3y41k.cloudspaces.litng.ai}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-https://5173-01ktwpr2s7a3psr5m8722v67cz.cloudspaces.litng.ai}
     # ports:
     #   - "4001:4001"
     healthcheck:
@@ -119,7 +119,7 @@ services:
       AI_SERVICE_WS_URL: ws://ai-gateway:8000/asr
       QA_SERVICE_URL: http://qa-service:8100
       DATABASE_URL: postgresql://meetai:${POSTGRES_PASSWORD:-meetai_pass}@postgres:5432/meetai_dev
-      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-https://5173-01ktvk5ff6h8e14hscmjy3y41k.cloudspaces.litng.ai}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-https://5173-01ktwpr2s7a3psr5m8722v67cz.cloudspaces.litng.ai}
       GATEWAY_ALLOW_SELF_SIGNED: "false"
     ports:
       - "4010:4010"
@@ -299,8 +299,8 @@ services:
     environment:
       CHOKIDAR_USEPOLLING: "true"
       HOST: 0.0.0.0
-      VITE_AUTH_URL: ${VITE_AUTH_URL:-https://4010-01ktvk5ff6h8e14hscmjy3y41k.cloudspaces.litng.ai}
-      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-https://5173-01ktvk5ff6h8e14hscmjy3y41k.cloudspaces.litng.ai}                                        
+      VITE_AUTH_URL: ${VITE_AUTH_URL:-https://4010-01ktwpr2s7a3psr5m8722v67cz.cloudspaces.litng.ai}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-https://5173-01ktwpr2s7a3psr5m8722v67cz.cloudspaces.litng.ai}                                        
       VITE_AUTH_USE_HTTPS: "false"
     ports:
       - "5173:5173"

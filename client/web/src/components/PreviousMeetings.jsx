@@ -616,10 +616,10 @@ export default function PreviousMeetings() {
 
     return normalizedMeetings.filter((meeting) => {
       const title = String(meeting.title || '').toLowerCase();
-      const summary = String(meeting.summary || '').toLowerCase();
+      // const summary = String(meeting.summary || '').toLowerCase();
       const participants = (meeting.participants || []).join(' ').toLowerCase();
 
-      return title.includes(query) || summary.includes(query) || participants.includes(query);
+      return title.includes(query) || participants.includes(query);
     });
   }, [normalizedMeetings, searchQuery]);
 

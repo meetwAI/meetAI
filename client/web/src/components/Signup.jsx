@@ -71,7 +71,7 @@ export default function Signup() {
         <header className="d-flex justify-content-between align-items-center py-4 px-4 px-md-5 w-100 border-bottom border-secondary border-opacity-25">
           <div className="d-flex align-items-center gap-2 text-white">
             <span className="material-symbols-outlined fs-2 text-primary">settings_voice</span>
-            <h2 className="mb-0 fw-black text-white tracking-tight">TranscribeAI</h2>
+            <h2 className="mb-0 fw-black text-white tracking-tight">MeetAI</h2>
           </div>
           <nav className="d-none d-md-flex align-items-center gap-4">
             <Link to="/login" className="text-white text-decoration-none fw-semibold small opacity-75">
@@ -209,7 +209,7 @@ export default function Signup() {
 
         {/* Footer */}
         <footer className="d-flex flex-column flex-md-row justify-content-between align-items-center px-4 px-md-5 py-3 border-top border-secondary border-opacity-25 mt-auto w-100">
-          <p className="text-secondary small mb-2 mb-md-0">© 2024 TranscribeAI. All rights reserved.</p>
+          <p className="text-secondary small mb-2 mb-md-0">© 2025-2026 MeetAI. All rights reserved.</p>
           <div className="d-flex align-items-center gap-4">
             <a href="#" className="text-secondary small text-decoration-none">Privacy Policy</a>
             <a href="#" className="text-secondary small text-decoration-none">Terms of Service</a>

@@ -78,7 +78,7 @@ export default function ProfileSetup() {
                 <header className="d-flex justify-content-between align-items-center py-4 px-4 px-md-5 w-100 border-bottom border-secondary border-opacity-25">
                     <div className="d-flex align-items-center gap-2 text-white">
                         <span className="material-symbols-outlined fs-2 text-primary">settings_voice</span>
-                        <h2 className="mb-0 fw-black text-white tracking-tight">TranscribeAI</h2>
+                        <h2 className="mb-0 fw-black text-white tracking-tight">MeetAI</h2>
                     </div>
                     <button
                         type="button"
