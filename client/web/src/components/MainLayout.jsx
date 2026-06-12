@@ -104,38 +104,46 @@ const MainLayout = () => {
     }, [applySummaryToCache]);
 
 
-    const normalizeLine = React.useCallback((line) => ({
+    const normalizeLine = React.useCallback((line, aiSessionId = '') => ({
         speaker: Number.isFinite(Number(line?.speaker)) ? Number(line.speaker) : -1,
         text: String(line?.text || '').trim(),
         start: line?.start ?? null,
         end: line?.end ?? null,
         detected_language: line?.detected_language ?? null,
+        aiSessionId: line?.aiSessionId || aiSessionId,
     }), []);
-
-    const lineSignature = React.useCallback((line) => {
-        const speaker = Number.isFinite(Number(line?.speaker)) ? Number(line.speaker) : -1;
-        const text = String(line?.text || '').trim();
-        const start = line?.start ?? '';
-        const end = line?.end ?? '';
-        return `${speaker}|${start}|${end}|${text}`;
-    }, []);
 
     const appendUniqueLines = React.useCallback((baseLines, incomingLines) => {
         if (!Array.isArray(incomingLines) || incomingLines.length === 0) {
             return Array.isArray(baseLines) ? baseLines : [];
         }
 
-        const next = Array.isArray(baseLines) ? [...baseLines] : [];
-        incomingLines.forEach((line) => {
-            const key = lineSignature(line);
-            const lastKey = next.length ? lineSignature(next[next.length - 1]) : '';
-            if (!key || key === lastKey) {
-                return;
+        const byKey = new Map();
+        
+        // Add existing lines
+        const existing = Array.isArray(baseLines) ? baseLines : [];
+        existing.forEach((line) => {
+            if (line.start !== null) {
+                const key = `${line.aiSessionId || ''}:${line.start}`;
+                byKey.set(key, line);
+            } else {
+                // If no start time, just use a random key to append it
+                byKey.set(Math.random().toString(), line);
             }
-            next.push(line);
         });
-        return next;
-    }, [lineSignature]);
+
+        // Upsert incoming lines (updates text/end time/speaker for existing segments)
+        incomingLines.forEach((line) => {
+            if (line.start !== null) {
+                const key = `${line.aiSessionId || ''}:${line.start}`;
+                byKey.set(key, line);
+            } else {
+                byKey.set(Math.random().toString(), line);
+            }
+        });
+
+        return [...byKey.values()];
+    }, []);
 
     const lastCacheUpdateRef = React.useRef(0);
    
@@ -314,22 +322,11 @@ const MainLayout = () => {
                     }
                 }
 
+                const sessionId = String(payload?.session_id || payload?.aiSessionId || '');
                 const incomingLines = (Array.isArray(payload?.lines) ? payload.lines : [])
-                    .map((line) => normalizeLine(line))
+                    .map((line) => normalizeLine(line, sessionId))
                     .filter((line) => line.text);
-                const previousSegment = segmentLinesRef.current;
-
-                let linesToAppend = incomingLines;
-                const startsWithPreviousSegment =
-                    previousSegment.length > 0 &&
-                    incomingLines.length >= previousSegment.length &&
-                    previousSegment.every((line, index) => lineSignature(line) === lineSignature(incomingLines[index]));
-
-                if (startsWithPreviousSegment) {
-                    linesToAppend = incomingLines.slice(previousSegment.length);
-                }
-
-                const mergedLines = appendUniqueLines(cumulativeLinesRef.current, linesToAppend);
+                const mergedLines = appendUniqueLines(cumulativeLinesRef.current, incomingLines);
                 cumulativeLinesRef.current = mergedLines;
                 segmentLinesRef.current = incomingLines;
 

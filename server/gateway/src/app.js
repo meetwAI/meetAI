@@ -359,12 +359,13 @@ const buildAiWsUrl = ({ userId, meetingId }) => {
   return target.toString();
 };
 
-const normalizeLine = (line) => ({
+const normalizeLine = (line, aiSessionId = '') => ({
   speaker: Number.isFinite(Number(line?.speaker)) ? Number(line.speaker) : -1,
   text: String(line?.text || '').trim(),
   start: line?.start ?? null,
   end: line?.end ?? null,
   detected_language: line?.detected_language ?? null,
+  aiSessionId: line?.aiSessionId || aiSessionId,
 });
 
 const lineSignature = (line) => {
@@ -384,22 +385,26 @@ const appendUniqueLines = (baseLines, incomingLines) => {
   const baseLineMap = new Map();
   next.forEach((line, index) => {
     if (line.start !== null) {
-      baseLineMap.set(line.start, index);
+      const key = `${line.aiSessionId || ''}:${line.start}`;
+      baseLineMap.set(key, index);
     }
   });
 
   incomingLines.forEach((line) => {
-    if (line.start !== null && baseLineMap.has(line.start)) {
-      next[baseLineMap.get(line.start)] = line;
+    if (line.start !== null) {
+      const key = `${line.aiSessionId || ''}:${line.start}`;
+      if (baseLineMap.has(key)) {
+        next[baseLineMap.get(key)] = line;
+      } else {
+        next.push(line);
+        baseLineMap.set(key, next.length - 1);
+      }
     } else {
       next.push(line);
-      if (line.start !== null) {
-        baseLineMap.set(line.start, next.length - 1);
-      }
     }
   });
 
-  return next.sort((a, b) => (a.start ?? 0) - (b.start ?? 0));
+  return next;
 };
 
 const extractTranscriptText = (payload = {}) => {
@@ -1572,7 +1577,7 @@ io.on('connection', (socket) => {
           
           if (Array.isArray(parsed?.lines) && parsed.lines.length > 0) {
             const incomingLines = parsed.lines
-              .map((line) => normalizeLine(line))
+              .map((line) => normalizeLine(line, parsed?.session_id || ''))
               .filter((line) => line.text);
             cumulativeLines = appendUniqueLines(cumulativeLines, incomingLines);
             segmentLines = incomingLines;
@@ -1615,7 +1620,7 @@ io.on('connection', (socket) => {
         }
 
         const incomingLines = (Array.isArray(parsed?.lines) ? parsed.lines : [])
-          .map((line) => normalizeLine(line))
+          .map((line) => normalizeLine(line, parsed?.session_id || ''))
           .filter((line) => line.text);
 
         const mergedLines = appendUniqueLines(cumulativeLines, incomingLines);
