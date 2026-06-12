@@ -147,6 +147,8 @@ const MainLayout = () => {
             .replace(/(?<=\S)ترجمة/g, '')        // rule 4: ترجمة fused after a word
             .replace(/ترجمة(?=\S)/g, '')        // rule 5: ترجمة fused before a word
             .replace(/قنقر/g, '')                  // rule 6: قنقر unconditionally
+            .replace(/نانسي/g, '')                  // rule 6: قنقر unconditionally
+            .replace(/مترجمات/g, '')                  // rule 6: قنقر unconditionally
             .replace(/\s+/g, ' ')
             .trim();
 
