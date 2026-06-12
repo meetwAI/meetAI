@@ -368,13 +368,7 @@ const normalizeLine = (line, aiSessionId = '') => ({
   aiSessionId: line?.aiSessionId || aiSessionId,
 });
 
-const lineSignature = (line) => {
-  const speaker = Number.isFinite(Number(line?.speaker)) ? Number(line.speaker) : -1;
-  const text = String(line?.text || '').trim();
-  const start = line?.start ?? '';
-  const end = line?.end ?? '';
-  return `${speaker}|${start}|${end}|${text}`;
-};
+
 
 const appendUniqueLines = (baseLines, incomingLines) => {
   if (!Array.isArray(incomingLines) || incomingLines.length === 0) {

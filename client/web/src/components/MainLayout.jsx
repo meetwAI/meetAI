@@ -403,7 +403,7 @@ const MainLayout = () => {
             await stopCapture();
             setCaptureError(error?.message || 'Unable to capture tab audio.');
         }
-    }, [appendUniqueLines, applyTranscriptStateToCache, lineSignature, navigate, normalizeLine, queryClient, stopCapture]);
+    }, [appendUniqueLines, applyTranscriptStateToCache, navigate, normalizeLine, queryClient, stopCapture]);
 
     return (
         <div className="main-layout">
