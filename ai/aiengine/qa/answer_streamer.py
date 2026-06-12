@@ -19,6 +19,19 @@ chunks below are the ONLY information you may use. Do not bring in outside
 knowledge, do not speculate, and do not paraphrase the user's question back
 at them.
 
+ASR ARTIFACT NOTE:
+The transcript was produced by an automatic speech recognition model that
+sometimes inserts a specific hallucination. Silently discard the following
+when encountered, and do NOT quote, reference, or base any answer on them:
+  - The pair "ترجمة نانسي" in any form: with a space, without a space
+    ("ترجمةنانسي"), or fused onto real words ("كلامترجمة", "نانسيكلام").
+  - The word "قنقر" in any context, always.
+IMPORTANT: "نانسي" used correctly as a person's name in a sentence is NOT
+a hallucination — do not ignore it. Likewise "ترجمة" used correctly as the
+Arabic word for "translation" in a sentence is NOT a hallucination. Only
+discard them when they form the hallucination pair or are fused without a
+space to an adjacent word.
+
 RULES:
 - If the chunks contain the answer, give it directly and concisely. Quote
   short phrases when they make the answer crisper, but do not transcribe
@@ -33,8 +46,21 @@ RULES:
 """
 
 _MOM_PROMPT_INSTRUCTIONS = """\
-You are an expert meeting assistant. Your task is to write the Minutes of Meeting (MOM) for the provided meeting transcript chunks. 
-The transcript chunks are presented chronologically. 
+You are an expert meeting assistant. Your task is to write the Minutes of Meeting (MOM) for the provided meeting transcript chunks.
+The transcript chunks are presented chronologically.
+
+ASR ARTIFACT NOTE:
+The transcript was produced by an automatic speech recognition model that
+sometimes inserts a specific hallucination. Silently discard the following
+when encountered, and do NOT include or base any part of the minutes on them:
+  - The pair "ترجمة نانسي" in any form: with a space, without a space
+    ("ترجمةنانسي"), or fused onto real words ("كلامترجمة", "نانسيكلام").
+  - The word "قنقر" in any context, always.
+IMPORTANT: "نانسي" used correctly as a person's name in a sentence is NOT
+a hallucination — do not ignore it. Likewise "ترجمة" used correctly as the
+Arabic word for "translation" in a sentence is NOT a hallucination. Only
+discard them when they form the hallucination pair or are fused without a
+space to an adjacent word.
 
 RULES:
 - Provide a structured summary with clear sections (e.g., Overview, Key Topics Discussed, Action Items).

@@ -17,7 +17,28 @@ import {
 
 } from '../state';
 import { parseSseStream } from '../lib/sse'
-const normalizeTranscriptText = (value) => String(value || '').trim().replace(/\s+/g, ' ');
+// Removes the well-known Whisper hallucination "ترجمة نانسي" in all its forms.
+// Rules applied in order:
+//   1. "ترجمة" + optional whitespace + "نانسي" (spaced or fused together)
+//   2. "نانسي" fused (no space) to the word BEFORE it  e.g. "كلامنانسي"
+//   3. "نانسي" fused (no space) to the word AFTER it   e.g. "نانسيكلام"
+//   4. "ترجمة" fused (no space) to the word BEFORE it  e.g. "كلامترجمة"
+//   5. "ترجمة" fused (no space) to the word AFTER it   e.g. "ترجمةكلام"
+//   6. "قنقر" anywhere — always a hallucination in this context
+// "نانسي" and "ترجمة" standing alone (with spaces) are intentionally NOT filtered.
+const filterWhisperHallucinations = (text) =>
+  text
+    .replace(/ترجمة\s*نانسي/g, '')   // rule 1: core phrase (must run first)
+    .replace(/(?<=\S)نانسي/g, '')        // rule 2: نانسي fused after a word
+    .replace(/نانسي(?=\S)/g, '')        // rule 3: نانسي fused before a word
+    .replace(/(?<=\S)ترجمة/g, '')        // rule 4: ترجمة fused after a word
+    .replace(/ترجمة(?=\S)/g, '')        // rule 5: ترجمة fused before a word
+    .replace(/قنقر/g, '')                  // rule 6: قنقر unconditionally
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const normalizeTranscriptText = (value) =>
+  filterWhisperHallucinations(String(value || '').trim().replace(/\s+/g, ' '));
 
 const normalizeCalendarText = (value) => String(value || '').trim();
 
