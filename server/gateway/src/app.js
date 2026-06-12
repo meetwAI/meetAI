@@ -1568,9 +1568,10 @@ io.on('connection', (socket) => {
 
         if (parsed?.type === 'ready_to_stop') {
           console.log('[gateway] ai session ready_to_stop', { meetingId });
-          
+
+          let incomingLines = [];
           if (Array.isArray(parsed?.lines) && parsed.lines.length > 0) {
-            const incomingLines = parsed.lines
+            incomingLines = parsed.lines
               .map((line) => normalizeLine(line, parsed?.session_id || ''))
               .filter((line) => line.text);
             cumulativeLines = appendUniqueLines(cumulativeLines, incomingLines);
