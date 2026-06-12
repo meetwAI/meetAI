@@ -51,6 +51,7 @@ class TimedText(Timed):
 @dataclass
 class ASRToken(TimedText):
     probability: Optional[float] = None
+    token_id: Optional[int] = None
 
     def with_offset(self, offset: float) -> "ASRToken":
         return ASRToken(
@@ -60,6 +61,7 @@ class ASRToken(TimedText):
             self.speaker,
             detected_language=self.detected_language,
             probability=self.probability,
+            token_id=self.token_id,
         )
 
     def is_silence(self) -> bool:
@@ -127,6 +129,7 @@ class Segment(TimedText):
     speaker: Optional[int]
     tokens: Optional[List[ASRToken]] = None
     translation: Optional[Translation] = None
+    block_id: Optional[int] = None
 
     @classmethod
     def from_tokens(
@@ -167,6 +170,8 @@ class Segment(TimedText):
             "start": format_time(self.start),
             "end": format_time(self.end),
         }
+        if self.block_id is not None:
+            data["block_id"] = self.block_id
         if self.translation:
             data["translation"] = self.translation
         if self.detected_language:
@@ -225,6 +230,7 @@ class ChangeSpeaker:
 @dataclass
 class State:
     tokens: List[ASRToken] = field(default_factory=list)
+    next_token_id: int = 1
     buffer_transcription: Transcript = field(default_factory=Transcript)
     end_buffer: float = 0.0
     end_attributed_speaker: float = 0.0

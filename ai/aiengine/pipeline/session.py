@@ -207,6 +207,11 @@ class AudioPipeline:
     def _apply_transcription_output(
         self, committed_tokens: list, current_audio_processed_upto: float
     ) -> None:
+        for t in committed_tokens:
+            if getattr(t, "token_id", None) is None:
+                t.token_id = self.state.next_token_id
+                self.state.next_token_id += 1
+
         buffer_transcript = self.transcription.get_buffer()
 
         self.state.tokens.extend(committed_tokens)
@@ -243,8 +248,8 @@ class AudioPipeline:
         payload = FrontData(
             status=status,
             lines=lines,
-            buffer_transcription=buffer_transcription,
-            buffer_diarization=buffer_diarization,
+            buffer_transcription="",
+            buffer_diarization="",
             buffer_translation="",
             remaining_time_transcription=0.0,
             remaining_time_diarization=0.0,
