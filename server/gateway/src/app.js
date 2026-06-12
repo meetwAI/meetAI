@@ -1593,7 +1593,18 @@ io.on('connection', (socket) => {
               );
             }
           }
-          
+
+          // Emit the final lines to the frontend before ending the session,
+          // so the UI renders them in real-time without requiring a page refresh.
+          if (incomingLines.length > 0) {
+            socket.emit('meeting-transcript-update', {
+              meetingId,
+              aiSessionId: parsed?.session_id || '',
+              ...parsed,
+              lines: cumulativeLines,
+            });
+          }
+
           emitSessionEnded();
           try {
             await endMeetingTranscript(meetingId, userId, authToken);
