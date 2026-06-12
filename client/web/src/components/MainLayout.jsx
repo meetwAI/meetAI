@@ -93,22 +93,24 @@ const MainLayout = () => {
         };
 
         const handleSessionEnded = (payload) => {
+            // Finalizing state is already set synchronously in stopCapture().
+            // This handler is kept as a no-op safety net in case the session
+            // ends via a path other than the Stop button (e.g. tab share ended).
             const mid = Number(payload?.meetingId);
-            if (mid > 0) {
-                // Mark the just-finished meeting as "finalizing" — the DB flush
-                // is still in progress on the backend at this point.
+            if (mid > 0 && isTranscriptFinalizingState.value !== mid) {
                 isTranscriptFinalizingState.value = mid;
             }
         };
 
-        const handleTranscriptFinalized = (payload) => {
+        const handleTranscriptFinalized = async (payload) => {
             const mid = Number(payload?.meetingId);
             if (mid > 0) {
-                // DB is fully up-to-date — clear the finalizing state and
-                // refetch so the UI shows the persisted transcript.
+                // Wait for the fresh data to be fully fetched before hiding the banner
+                await Promise.all([
+                    queryClient.invalidateQueries({ queryKey: ['meeting', String(mid)] }),
+                    queryClient.invalidateQueries({ queryKey: ['meetings', 'dummy'] })
+                ]);
                 isTranscriptFinalizingState.value = null;
-                queryClient.invalidateQueries({ queryKey: ['meeting', String(mid)] });
-                queryClient.invalidateQueries({ queryKey: ['meetings', 'dummy'] });
             }
         };
 
@@ -194,6 +196,12 @@ const MainLayout = () => {
 
     const stopCapture = React.useCallback(async () => {
         const completedMeetingId = activeMeetingIdRef.current;
+
+        // Show "Finalizing transcript..." immediately when the user presses Stop —
+        // before any async work so there is zero perceived delay.
+        if (completedMeetingId) {
+            isTranscriptFinalizingState.value = Number(completedMeetingId);
+        }
 
         // Force a cache update on stop to ensure last lines are saved
         if (completedMeetingId) {
