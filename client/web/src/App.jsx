@@ -10,8 +10,6 @@ import Signup from './components/Signup';
 import Profile from './components/Profile';
 import ProfileSetup from './components/ProfileSetup';
 
-import LandingPage from './components/LandingPage';
-
 const getStoredUser = () => {
   try {
     return JSON.parse(localStorage.getItem('meetai_user') || 'null');
@@ -26,7 +24,7 @@ const RequireAuth = ({ children, authReady }) => {
   }
   const user = getStoredUser();
   if (!user) {
-    return <LandingPage />;
+    return <Login />;
   }
   return children;
 };
@@ -129,7 +127,7 @@ function App() {
 
         <Route
           path="*"
-          element={user ? <Navigate to="/" replace /> : <LandingPage />}
+          element={user ? <Navigate to="/" replace /> : <Login />}
         />
       </Routes>
     </Router>
