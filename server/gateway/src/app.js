@@ -1610,11 +1610,17 @@ io.on('connection', (socket) => {
           // moment the frontend receives meeting-session-ended and re-fetches.
           try {
             await endMeetingTranscript(meetingId, userId, authToken);
+            // Notify the frontend that the DB is fully up-to-date so it can
+            // re-fetch the finalized transcript and drop the "Finalizing…" UI.
+            socket.emit('meeting-transcript-finalized', { meetingId });
+            console.log('[gateway] meeting-transcript-finalized emitted', { meetingId });
           } catch (error) {
             console.error('[gateway] transcript buffer final flush failed', {
               meetingId,
               message: error?.message || 'unknown error',
             });
+            // Still notify the frontend even on flush error so it doesn't hang.
+            socket.emit('meeting-transcript-finalized', { meetingId });
           }
           // Send the full in-memory transcript in the session-ended payload so
           // the frontend can render it immediately without an extra API round-trip.

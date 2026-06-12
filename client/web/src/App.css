@@ -443,6 +443,20 @@
 	font-size: 0.9rem;
 }
 
+.meeting-transcript-finalizing {
+	margin: 0 0 10px;
+	padding: 6px 10px;
+	border-radius: 8px;
+	background: rgb(251 191 36 / 0.08);
+	border: 1px solid rgb(251 191 36 / 0.25);
+	color: rgb(253 224 71);
+	font-size: 0.85rem;
+	font-style: italic;
+	display: flex;
+	align-items: center;
+	gap: 4px;
+}
+
 .meeting-detail-topbar {
 	display: flex;
 	justify-content: flex-start;

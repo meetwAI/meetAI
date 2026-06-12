@@ -5,7 +5,7 @@ import './MainLayout.css';
 import { getSocket, connectSocket } from '../lib/socket';
 import { fetchWithAuth } from '../lib/http';
 import { Menu, Mic, Plus } from 'lucide-react';
-import { activeMeetingIdState, isSummaryLoadingState } from '../state';
+import { activeMeetingIdState, isSummaryLoadingState, isTranscriptFinalizingState } from '../state';
 
 const MainLayout = () => {
     const navigate = useNavigate();
@@ -92,16 +92,40 @@ const MainLayout = () => {
             }
         };
 
+        const handleSessionEnded = (payload) => {
+            const mid = Number(payload?.meetingId);
+            if (mid > 0) {
+                // Mark the just-finished meeting as "finalizing" — the DB flush
+                // is still in progress on the backend at this point.
+                isTranscriptFinalizingState.value = mid;
+            }
+        };
+
+        const handleTranscriptFinalized = (payload) => {
+            const mid = Number(payload?.meetingId);
+            if (mid > 0) {
+                // DB is fully up-to-date — clear the finalizing state and
+                // refetch so the UI shows the persisted transcript.
+                isTranscriptFinalizingState.value = null;
+                queryClient.invalidateQueries({ queryKey: ['meeting', String(mid)] });
+                queryClient.invalidateQueries({ queryKey: ['meetings', 'dummy'] });
+            }
+        };
+
         socket.on('meeting-summary-loading', handleSummaryLoading);
         socket.on('meeting-summary-ready', handleSummaryReady);
         socket.on('meeting-summary-error', handleSummaryError);
+        socket.on('meeting-session-ended', handleSessionEnded);
+        socket.on('meeting-transcript-finalized', handleTranscriptFinalized);
 
         return () => {
             socket.off('meeting-summary-loading', handleSummaryLoading);
             socket.off('meeting-summary-ready', handleSummaryReady);
             socket.off('meeting-summary-error', handleSummaryError);
+            socket.off('meeting-session-ended', handleSessionEnded);
+            socket.off('meeting-transcript-finalized', handleTranscriptFinalized);
         };
-    }, [applySummaryToCache]);
+    }, [applySummaryToCache, queryClient]);
 
 
     // Removes the well-known Whisper hallucination "ترجمة نانسي" in all its forms.

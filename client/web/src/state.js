@@ -26,3 +26,7 @@ export const liveTranscriptSignal = signal({
 });
 
 export const isSummaryLoadingState = signal(false);
+
+// Holds the meetingId (number) while the backend is flushing the transcript to
+// the DB after the session ends. Null when no finalization is in progress.
+export const isTranscriptFinalizingState = signal(null);

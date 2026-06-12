@@ -14,6 +14,7 @@ import {
   togglePreviousMeetingsSidebar,
   activeMeetingIdState,
   isSummaryLoadingState,
+  isTranscriptFinalizingState,
 
 } from '../state';
 import { parseSseStream } from '../lib/sse'
@@ -1758,6 +1759,12 @@ export default function PreviousMeetings() {
             ) : (
               <>
                 <div className="meeting-transcript-body">
+                  {/* Finalizing banner: shown while DB flush is in progress */}
+                  {isTranscriptFinalizingState.value === Number(selectedMeeting.id) && (
+                    <p className="meeting-transcript-finalizing">
+                      Finalizing transcript<span className="cursor-blink">▍</span>
+                    </p>
+                  )}
                   {transcriptState.groups.map((group, groupIndex) => {
                     const isLastGroup = groupIndex === transcriptState.groups.length - 1;
                     const timeLabel =
