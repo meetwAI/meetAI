@@ -1606,7 +1606,8 @@ io.on('connection', (socket) => {
             });
           }
 
-          emitSessionEnded();
+          // Flush transcript to DB first so the API returns fresh data the
+          // moment the frontend receives meeting-session-ended and re-fetches.
           try {
             await endMeetingTranscript(meetingId, userId, authToken);
           } catch (error) {
@@ -1615,6 +1616,9 @@ io.on('connection', (socket) => {
               message: error?.message || 'unknown error',
             });
           }
+          // Send the full in-memory transcript in the session-ended payload so
+          // the frontend can render it immediately without an extra API round-trip.
+          emitSessionEnded({ lines: cumulativeLines });
           cleanupAiSocket();
           aiSocket = null;
           activeMeetingId = null;
