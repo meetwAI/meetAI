@@ -166,31 +166,13 @@ const MainLayout = () => {
             return Array.isArray(baseLines) ? baseLines : [];
         }
 
-        const byKey = new Map();
+        const currentSessionId = incomingLines[0].aiSessionId || '';
         
-        // Add existing lines
-        const existing = Array.isArray(baseLines) ? baseLines : [];
-        existing.forEach((line) => {
-            if (line.start !== null) {
-                const key = `${line.aiSessionId || ''}:${line.start}`;
-                byKey.set(key, line);
-            } else {
-                // If no start time, just use a random key to append it
-                byKey.set(Math.random().toString(), line);
-            }
-        });
+        const previousSessionLines = (Array.isArray(baseLines) ? baseLines : []).filter(
+            (line) => line.aiSessionId && line.aiSessionId !== currentSessionId
+        );
 
-        // Upsert incoming lines (updates text/end time/speaker for existing segments)
-        incomingLines.forEach((line) => {
-            if (line.start !== null) {
-                const key = `${line.aiSessionId || ''}:${line.start}`;
-                byKey.set(key, line);
-            } else {
-                byKey.set(Math.random().toString(), line);
-            }
-        });
-
-        return [...byKey.values()];
+        return [...previousSessionLines, ...incomingLines];
     }, []);
 
     const lastCacheUpdateRef = React.useRef(0);

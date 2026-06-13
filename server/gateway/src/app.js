@@ -375,30 +375,13 @@ const appendUniqueLines = (baseLines, incomingLines) => {
     return Array.isArray(baseLines) ? baseLines : [];
   }
 
-  const next = Array.isArray(baseLines) ? [...baseLines] : [];
-  const baseLineMap = new Map();
-  next.forEach((line, index) => {
-    if (line.start !== null) {
-      const key = `${line.aiSessionId || ''}:${line.start}`;
-      baseLineMap.set(key, index);
-    }
-  });
+  const currentSessionId = incomingLines[0].aiSessionId || '';
+  
+  const previousSessionLines = (Array.isArray(baseLines) ? baseLines : []).filter(
+    (line) => line.aiSessionId && line.aiSessionId !== currentSessionId
+  );
 
-  incomingLines.forEach((line) => {
-    if (line.start !== null) {
-      const key = `${line.aiSessionId || ''}:${line.start}`;
-      if (baseLineMap.has(key)) {
-        next[baseLineMap.get(key)] = line;
-      } else {
-        next.push(line);
-        baseLineMap.set(key, next.length - 1);
-      }
-    } else {
-      next.push(line);
-    }
-  });
-
-  return next;
+  return [...previousSessionLines, ...incomingLines];
 };
 
 const extractTranscriptText = (payload = {}) => {
