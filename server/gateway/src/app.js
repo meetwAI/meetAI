@@ -81,7 +81,14 @@ const flushTranscriptBuffer = async (meetingId) => {
        jsonb_set(
          COALESCE(full_transcript, '{}'::jsonb),
          '{text}',
-         to_jsonb($1::text),
+         to_jsonb(
+           COALESCE(full_transcript->>'text', '')
+           || CASE
+             WHEN COALESCE(full_transcript->>'text', '') = '' THEN ''
+             ELSE ' '
+           END
+           || $1::text
+         ),
          true
        ),
        '{lastUpdated}',
@@ -359,12 +366,11 @@ const normalizeLine = (line, aiSessionId = '') => ({
   end: line?.end ?? null,
   detected_language: line?.detected_language ?? null,
   aiSessionId: line?.aiSessionId || aiSessionId,
-  block_id: line?.block_id ?? null,
 });
 
 
 
-const mergeBlocks = (baseLines, incomingLines) => {
+const appendUniqueLines = (baseLines, incomingLines) => {
   if (!Array.isArray(incomingLines) || incomingLines.length === 0) {
     return Array.isArray(baseLines) ? baseLines : [];
   }
@@ -372,15 +378,15 @@ const mergeBlocks = (baseLines, incomingLines) => {
   const next = Array.isArray(baseLines) ? [...baseLines] : [];
   const baseLineMap = new Map();
   next.forEach((line, index) => {
-    if (line.block_id != null) {
-      const key = `${line.aiSessionId || ''}:${line.block_id}`;
+    if (line.start !== null) {
+      const key = `${line.aiSessionId || ''}:${line.start}`;
       baseLineMap.set(key, index);
     }
   });
 
   incomingLines.forEach((line) => {
-    if (line.block_id != null) {
-      const key = `${line.aiSessionId || ''}:${line.block_id}`;
+    if (line.start !== null) {
+      const key = `${line.aiSessionId || ''}:${line.start}`;
       if (baseLineMap.has(key)) {
         next[baseLineMap.get(key)] = line;
       } else {
@@ -1568,7 +1574,7 @@ io.on('connection', (socket) => {
             incomingLines = parsed.lines
               .map((line) => normalizeLine(line, parsed?.session_id || ''))
               .filter((line) => line.text);
-            cumulativeLines = mergeBlocks(cumulativeLines, incomingLines);
+            cumulativeLines = appendUniqueLines(cumulativeLines, incomingLines);
             segmentLines = incomingLines;
             const transcriptState = {
               aiSessionId: String(parsed?.session_id || ''),
@@ -1633,7 +1639,7 @@ io.on('connection', (socket) => {
           .map((line) => normalizeLine(line, parsed?.session_id || ''))
           .filter((line) => line.text);
 
-        const mergedLines = mergeBlocks(cumulativeLines, incomingLines);
+        const mergedLines = appendUniqueLines(cumulativeLines, incomingLines);
         cumulativeLines = mergedLines;
         segmentLines = incomingLines;
 
@@ -1656,10 +1662,16 @@ io.on('connection', (socket) => {
           );
         }
 
-        const confirmedText = mergedLines.map((line) => line.text).join(' ');
+        // Only append lines that are "new" (i.e. start after the end of the previous segmentLines array)
+        // Or simply slice based on length difference if they are append-only.
+        // Actually, since TokenAlignment updates existing segments, we should be careful.
+        // The safest way is to use segmentLines length as a heuristic for what was already processed.
+        const linesToAppend = incomingLines.slice(segmentLines.length);
+        segmentLines = incomingLines;
+        const confirmedText = linesToAppend.map((line) => line.text).join(' ');
 
         if (confirmedText && redisReady) {
-          await meetingCacheClient.set(`meeting:${meetingId}:transcript_buffer`, confirmedText);
+          await meetingCacheClient.append(`meeting:${meetingId}:transcript_buffer`, ` ${confirmedText}`);
           await meetingCacheClient.setNX(`meeting:${meetingId}:buffer_ts`, String(Date.now()));
           await meetingCacheClient.expire(`meeting:${meetingId}:transcript_buffer`, 7200);
           await meetingCacheClient.expire(`meeting:${meetingId}:buffer_ts`, 7200);

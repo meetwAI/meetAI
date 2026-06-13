@@ -194,7 +194,6 @@ class TokensAlignment:
                 if current_tokens:
                     seg = Segment.from_tokens(current_tokens)
                     seg.speaker = current_speaker
-                    seg.block_id = getattr(current_tokens[0], "token_id", 0)
                     segments.append(seg)
                     current_tokens = []
                     current_speaker = None
@@ -211,7 +210,6 @@ class TokensAlignment:
                         # Speaker changed mid-chunk — emit what we have so far.
                         seg = Segment.from_tokens(current_tokens)
                         seg.speaker = current_speaker
-                        seg.block_id = getattr(current_tokens[0], "token_id", 0)
                         segments.append(seg)
                         current_tokens = []
                         current_speaker = token.speaker
@@ -221,7 +219,6 @@ class TokensAlignment:
         if current_tokens:
             seg = Segment.from_tokens(current_tokens)
             seg.speaker = current_speaker
-            seg.block_id = getattr(current_tokens[0], "token_id", 0)
             segments.append(seg)
 
         return segments, diarization_buffer
@@ -242,9 +239,9 @@ class TokensAlignment:
             for token in self.new_tokens:
                 if isinstance(token, Silence):
                     if self.current_line_tokens:
-                        seg = Segment.from_tokens(self.current_line_tokens)
-                        seg.block_id = getattr(self.current_line_tokens[0], "token_id", 0)
-                        self.validated_segments.append(seg)
+                        self.validated_segments.append(
+                            Segment.from_tokens(self.current_line_tokens)
+                        )
                         self.current_line_tokens = []
 
                     end_silence = token.end if token.has_ended else silence_now
@@ -262,9 +259,7 @@ class TokensAlignment:
 
             segments = list(self.validated_segments)
             if self.current_line_tokens:
-                seg = Segment.from_tokens(self.current_line_tokens)
-                seg.block_id = getattr(self.current_line_tokens[0], "token_id", 0)
-                segments.append(seg)
+                segments.append(Segment.from_tokens(self.current_line_tokens))
 
         if current_silence:
             end_silence = (

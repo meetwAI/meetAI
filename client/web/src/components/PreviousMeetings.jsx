@@ -745,25 +745,42 @@ export default function PreviousMeetings() {
     let bufferDiarization = normalizeTranscriptText(selectedMeeting.bufferDiarization);
     const rawLines = Array.isArray(selectedMeeting.lines) ? selectedMeeting.lines : [];
 
+    // Always sort by start time for consistent chronological grouping
     const lines = rawLines.slice().sort((a, b) => {
       const aVal = a?.start ?? a?.end ?? 0;
       const bVal = b?.start ?? b?.end ?? 0;
       return Number(aVal) - Number(bVal);
     });
 
-    const groups = lines.map((line) => {
+    const groups = [];
+
+    lines.forEach((line) => {
       const speakerValue = Number.isFinite(Number(line?.speaker))
         ? Number(line.speaker)
         : line?.speaker ?? null;
       const text = normalizeTranscriptText(line?.text);
-      return {
-        speaker: speakerValue,
-        text: text,
-        start: line?.start ?? null,
-        end: line?.end ?? null,
-        block_id: line?.block_id ?? null,
-      };
-    }).filter(group => group.text);
+      if (!text) return;
+
+      const lineStart = line?.start ?? null;
+      const lineEnd = line?.end ?? null;
+
+      const lastGroup = groups[groups.length - 1];
+
+      if (lastGroup && lastGroup.speaker === speakerValue) {
+        // Consecutive same-speaker line — extend the current group.
+        lastGroup.text = `${lastGroup.text} ${text}`.trim();
+        if (lastGroup.start == null && lineStart != null) lastGroup.start = lineStart;
+        if (lineEnd != null) lastGroup.end = lineEnd;
+      } else {
+        // New speaker turn — open a fresh group.
+        groups.push({
+          speaker: speakerValue,
+          text: text,
+          start: lineStart,
+          end: lineEnd,
+        });
+      }
+    });
 
     if (!groups.length && (bufferTranscription || bufferDiarization)) {
       const bufferText = [bufferDiarization, bufferTranscription].filter(Boolean).join(' ');

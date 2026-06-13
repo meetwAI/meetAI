@@ -159,38 +159,38 @@ const MainLayout = () => {
         end: line?.end ?? null,
         detected_language: line?.detected_language ?? null,
         aiSessionId: line?.aiSessionId || aiSessionId,
-        block_id: line?.block_id ?? null,
     }), []);
 
-    const mergeBlocks = React.useCallback((baseLines, incomingLines) => {
+    const appendUniqueLines = React.useCallback((baseLines, incomingLines) => {
         if (!Array.isArray(incomingLines) || incomingLines.length === 0) {
             return Array.isArray(baseLines) ? baseLines : [];
         }
 
-        const next = Array.isArray(baseLines) ? [...baseLines] : [];
-        const baseLineMap = new Map();
-        next.forEach((line, index) => {
-            if (line.block_id != null) {
-                const key = `${line.aiSessionId || ''}:${line.block_id}`;
-                baseLineMap.set(key, index);
-            }
-        });
-
-        incomingLines.forEach((line) => {
-            if (line.block_id != null) {
-                const key = `${line.aiSessionId || ''}:${line.block_id}`;
-                if (baseLineMap.has(key)) {
-                    next[baseLineMap.get(key)] = line;
-                } else {
-                    next.push(line);
-                    baseLineMap.set(key, next.length - 1);
-                }
+        const byKey = new Map();
+        
+        // Add existing lines
+        const existing = Array.isArray(baseLines) ? baseLines : [];
+        existing.forEach((line) => {
+            if (line.start !== null) {
+                const key = `${line.aiSessionId || ''}:${line.start}`;
+                byKey.set(key, line);
             } else {
-                next.push(line);
+                // If no start time, just use a random key to append it
+                byKey.set(Math.random().toString(), line);
             }
         });
 
-        return next;
+        // Upsert incoming lines (updates text/end time/speaker for existing segments)
+        incomingLines.forEach((line) => {
+            if (line.start !== null) {
+                const key = `${line.aiSessionId || ''}:${line.start}`;
+                byKey.set(key, line);
+            } else {
+                byKey.set(Math.random().toString(), line);
+            }
+        });
+
+        return [...byKey.values()];
     }, []);
 
     const lastCacheUpdateRef = React.useRef(0);
@@ -380,7 +380,7 @@ const MainLayout = () => {
                 const incomingLines = (Array.isArray(payload?.lines) ? payload.lines : [])
                     .map((line) => normalizeLine(line, sessionId))
                     .filter((line) => line.text);
-                const mergedLines = mergeBlocks(cumulativeLinesRef.current, incomingLines);
+                const mergedLines = appendUniqueLines(cumulativeLinesRef.current, incomingLines);
                 cumulativeLinesRef.current = mergedLines;
                 segmentLinesRef.current = incomingLines;
 
@@ -457,7 +457,7 @@ const MainLayout = () => {
             await stopCapture();
             setCaptureError(error?.message || 'Unable to capture tab audio.');
         }
-    }, [mergeBlocks, applyTranscriptStateToCache, navigate, normalizeLine, queryClient, stopCapture]);
+    }, [appendUniqueLines, applyTranscriptStateToCache, navigate, normalizeLine, queryClient, stopCapture]);
 
     return (
         <div className="main-layout">
